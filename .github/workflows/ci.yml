@@ -1,0 +1,88 @@
+name: CI
+
+# Provjere se izvršavaju pri svakom push-u na main i na svakom PR-u.
+# Cilj: main grana je uvijek zelena.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Otkaži stariji run kad stigne novi commit na isti PR/branch.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck-and-migrate:
+    name: Typecheck i SQL migracije
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: rtcg
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: rtcg_legal_ai
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rtcg -d rtcg_legal_ai"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      # Backend čita ove varijable kroz config.ts (kao da je iz .env-a).
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: rtcg
+      PGPASSWORD: ci_only_password
+      PGDATABASE: rtcg_legal_ai
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Instaliraj zavisnosti
+        run: npm ci
+
+      - name: TypeScript provjera (sve workspace-e)
+        run: npm run typecheck
+
+      - name: Instaliraj psql klijent
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Sačekaj da Postgres bude spreman
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -U rtcg -d rtcg_legal_ai >/dev/null 2>&1; then
+              echo "Postgres spreman"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Postgres nije spreman nakon 30s"
+          exit 1
+        env:
+          PGPASSWORD: ci_only_password
+
+      - name: Inicijalizuj ekstenzije i šeme
+        run: psql -h localhost -U rtcg -d rtcg_legal_ai -v ON_ERROR_STOP=1 -f db/init/01_extensions.sql
+        env:
+          PGPASSWORD: ci_only_password
+
+      - name: Pokreni migracije
+        run: npm run db:migrate
+
+      - name: Provjera idempotentnosti (drugi put ne smije primijeniti ništa)
+        run: |
+          out=$(npm run db:migrate --silent 2>&1)
+          echo "$out"
+          echo "$out" | grep -q "primijenjeno: 0" || (echo "Migracije nisu idempotentne!" && exit 1)
