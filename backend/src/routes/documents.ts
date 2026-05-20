@@ -19,6 +19,7 @@ import type { DocumentMeta } from "@rtcg/shared";
 import { pool } from "../db.js";
 import { hashBuffer, removeFileQuiet, storeFile } from "../services/storage.js";
 import { logIngest } from "../services/audit.js";
+import { ParserError, SUPPORTED_MIMETYPES, parseFile } from "../services/parser.js";
 
 // ---------------------------------------------------------------------------
 // Multer (memory storage; fajlovi do 50 MB)
@@ -90,6 +91,10 @@ interface DocumentRow {
   velicina_bajtova: string | null; // BIGINT vraća se kao string iz pg-a
   kreirano: Date;
   azurirano: Date;
+}
+
+function akcijaZaMime(mimetype: string): "PARSE_PDF" | "PARSE_DOCX" {
+  return mimetype === SUPPORTED_MIMETYPES.PDF ? "PARSE_PDF" : "PARSE_DOCX";
 }
 
 function rowToMeta(r: DocumentRow): DocumentMeta {
@@ -194,7 +199,44 @@ documentsRouter.post(
     const documentId = randomUUID();
     const stored = await storeFile(documentId, req.file.originalname, req.file.buffer);
 
-    // 3. INSERT + audit u jednoj transakciji.
+    // 3. Parsiranje teksta. Greška ovdje znači da fajl nije validan PDF/DOCX —
+    //    vraćamo 422, ali ne brišemo fajl jer ga je korisnik već uspješno
+    //    uploadovao; soft delete + reindex u kasnijoj fazi.
+    let tekst: string;
+    let brojStrana: number | null;
+    const parseStart = Date.now();
+    try {
+      const parsed = await parseFile(req.file.buffer, req.file.mimetype);
+      tekst = parsed.tekst;
+      brojStrana = parsed.brojStrana;
+    } catch (e) {
+      await removeFileQuiet(stored.putanjaApsolutna);
+      // Document još nije u DB-u (INSERT dolazi tek poslije parsiranja),
+      // pa FK na audit.ingest_log.document_id bi pao; ostavljamo NULL.
+      await logIngest({
+        documentId: null,
+        akcija: "FAILED",
+        status: "GRESKA",
+        greska: e instanceof Error ? e.message : String(e),
+        detalji: {
+          faza: "parser",
+          mimetip: req.file.mimetype,
+          originalnoIme: req.file.originalname,
+          hash,
+        },
+        trajanjeMs: Date.now() - parseStart,
+      }).catch((logErr) => {
+        console.error("[audit] nije uspjelo logovanje parse failure-a:", logErr);
+      });
+      res.status(422).json({
+        greska: "Fajl nije moguće parsirati kao validan PDF/DOCX.",
+        detalji: e instanceof ParserError ? e.message : undefined,
+      });
+      return;
+    }
+    const parseTrajanjeMs = Date.now() - parseStart;
+
+    // 4. INSERT + audit u jednoj transakciji.
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -202,9 +244,10 @@ documentsRouter.post(
       const ins = await client.query<DocumentRow>(
         `INSERT INTO documents.documents (
             id, naslov, tip, oblast, status, datum, organ_sud, broj_sluzbenog_lista,
-            jezik, velicina_bajtova,
-            izvorni_fajl_putanja, izvorni_fajl_hash, izvorni_fajl_mimetip
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            jezik, broj_strana, velicina_bajtova,
+            izvorni_fajl_putanja, izvorni_fajl_hash, izvorni_fajl_mimetip,
+            tekst
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          RETURNING id, naslov, tip, oblast, status, datum, organ_sud, broj_sluzbenog_lista,
                    jezik, broj_strana, velicina_bajtova, kreirano, azurirano`,
         [
@@ -217,10 +260,12 @@ documentsRouter.post(
           metadata.organSud ?? null,
           metadata.brojSluzbenogLista ?? null,
           metadata.jezik ?? "mixed",
+          brojStrana,
           stored.velicinaBajtova,
           stored.putanjaRelativna,
           hash,
           req.file.mimetype,
+          tekst,
         ],
       );
 
@@ -233,6 +278,20 @@ documentsRouter.post(
             velicinaBajtova: stored.velicinaBajtova,
             originalnoIme: req.file.originalname,
           },
+        },
+        client,
+      );
+
+      await logIngest(
+        {
+          documentId,
+          akcija: akcijaZaMime(req.file.mimetype),
+          detalji: {
+            brojStrana,
+            duzinaTeksta: tekst.length,
+            jeBezTeksta: tekst.length === 0,
+          },
+          trajanjeMs: parseTrajanjeMs,
         },
         client,
       );
