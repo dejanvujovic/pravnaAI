@@ -1,6 +1,11 @@
 import pg from "pg";
 import { config } from "./config.js";
 
+// DATE (OID 1082) — vraćaj sirov "YYYY-MM-DD" string. Default node-pg
+// parser pravi JS Date objekat u local TZ, što kasnije pri .toISOString()
+// može pomjeriti dan unaprijed/unazad (CET ≠ UTC).
+pg.types.setTypeParser(1082, (val: string) => val);
+
 export const pool = new pg.Pool({
   host: config.postgres.host,
   port: config.postgres.port,
