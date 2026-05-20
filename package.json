@@ -1,0 +1,30 @@
+{
+  "name": "rtcg-legal-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RTCG Legal AI — interni RAG sistem za pravnu službu Radio-televizije Crne Gore",
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "dev:backend": "npm run dev --workspace=backend",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f postgres",
+    "db:psql": "docker compose exec postgres psql -U rtcg -d rtcg_legal_ai",
+    "db:migrate": "npm run migrate --workspace=backend",
+    "db:migrate:dry": "npm run migrate --workspace=backend -- --dry",
+    "embeddings:up": "docker compose up -d --build embeddings",
+    "embeddings:logs": "docker compose logs -f embeddings",
+    "stack:up": "docker compose up -d --build"
+  },
+  "engines": {
+    "node": ">=20.10.0"
+  }
+}

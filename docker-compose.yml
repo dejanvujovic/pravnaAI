@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: rtcg-legal-ai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PGUSER:-rtcg}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-changeme_local_only}
+      POSTGRES_DB: ${PGDATABASE:-rtcg_legal_ai}
+    ports:
+      - "${PGPORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-rtcg} -d ${PGDATABASE:-rtcg_legal_ai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  embeddings:
+    build:
+      context: ./embeddings
+    container_name: rtcg-legal-ai-embeddings
+    restart: unless-stopped
+    ports:
+      - "${EMBEDDINGS_PORT:-8001}:8001"
+    volumes:
+      - embeddings-cache:/cache
+    environment:
+      EMBEDDING_MODEL: BAAI/bge-m3
+      EMBEDDING_MAX_BATCH: "32"
+      LOG_LEVEL: INFO
+
+volumes:
+  postgres-data:
+    name: rtcg-legal-ai-postgres-data
+  embeddings-cache:
+    name: rtcg-legal-ai-embeddings-cache

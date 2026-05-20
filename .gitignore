@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Claude Code — user-specific permissions/settings, može sadržati naknadno
+# uklesane komande sa lokalnim credenciima. Ako tim želi dijeliti pravila,
+# kreirajte poseban `.claude/settings.shared.json` i otključajte ga ovdje.
+.claude/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Docker volumes (local data)
+.docker-data/
+postgres-data/
+
+# Document storage (ingest uploads, OCR cache)
+data/uploads/
+data/ocr-cache/
+data/exports/
+
+# Coverage / test artifacts
+coverage/
+.nyc_output/
+
+# Operating system
+desktop.ini
