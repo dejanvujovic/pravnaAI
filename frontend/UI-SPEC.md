@@ -6,6 +6,7 @@
 
 **Stack:** React + TypeScript + Vite · `@rtcg/shared` za tipove · UI tekst na crnogorskom
 **Status:** Faza 1 (MVP, jun/jul 2026)
+**Izvor istine za tipove:** `shared/types.ts` — ovaj dokument upućuje na njega, ne duplira ga.
 
 ---
 
@@ -59,16 +60,23 @@ Akcent se uvijek koristi kao gradijent `linear-gradient(135deg, var(--accent), v
 - Sjenke: štedljivo — samo na composer baru i aktivnim dropzone stanjima.
 - Animacije: `fadeUp` (0.3–0.5s) za ulazak poruka i redova; staggered `animation-delay` za grid kartica. Bez raštrkanih mikro-animacija.
 
-### 1.4 Tipovi dokumenata (jedinstveni kroz cijeli UI)
+### 1.4 Tipovi dokumenata i vizuelne grupe
 
-Definisati jednom u `shared` i koristiti svuda (badge, filteri, klasifikacija pri unosu):
+Taksonomija (`DocumentType`, 9 vrijednosti) živi u `@rtcg/shared` i ne smije se redefinisati u UI-u. Za prikaz se 9 tipova mapira na **4 vizuelne grupe** (`DocumentGroup`) — svaka grupa ima jednu boju i ikonicu. Mapiranje `DocumentType → DocumentGroup` drži frontend (`src/lib/docTypes.ts`), ne `shared`.
 
-| Ključ | Labela | Boja | Ikonica (lucide) |
+| `DocumentType` | Grupa (`DocumentGroup`) | Boja | Ikonica (lucide) |
 |---|---|---|---|
-| `zakon` | Zakon / propis | `--accent` | `BookOpen` |
-| `presuda` | Presuda | `--blue` | `Gavel` |
-| `ugovor` | Ugovor | `--green` | `FileSignature` |
-| `interni` | Interni akt RTCG | `--violet` | `Building2` |
+| `ZAKON` | `PROPIS` | `--accent` | `BookOpen` |
+| `PODZAKONSKI_AKT` | `PROPIS` | `--accent` | `BookOpen` |
+| `PRESUDA` | `PRAKSA` | `--blue` | `Gavel` |
+| `SUDSKA_PRAKSA` | `PRAKSA` | `--blue` | `Gavel` |
+| `MISLJENJE` | `PRAKSA` | `--blue` | `Gavel` |
+| `UGOVOR_O_RADU` | `UGOVOR` | `--green` | `FileSignature` |
+| `UGOVOR_JAVNA_NABAVKA` | `UGOVOR` | `--green` | `FileSignature` |
+| `INTERNI_AKT` | `INTERNI` | `--violet` | `Building2` |
+| `OSTALO` | `INTERNI` | `--violet` | `Building2` |
+
+> `<TypeBadge>` prikazuje **tačan tip** kao tekst, ali boju/ikonicu uzima iz grupe. Tako pravnik vidi precizno *"Ugovor o javnoj nabavci"*, a vizuelno ostaje dosljedno sa ostalim ugovorima. Filter chips mogu raditi i po grupi (4 dugmeta) i po oblasti (`LegalArea`).
 
 ---
 
@@ -118,10 +126,12 @@ Chat-centričan kao Harvey, ali sa citiranjem izvora kao ključnom razlikom.
 
 ### 3.4 Blok izvora (ključna komponenta — `<SourceList>`)
 
-Ispod svakog AI odgovora, naslov `IZVORI (n)` sa ikonicom `BookOpen`. Svaki izvor je `<SourcePill>`:
+Renderuje `QnaResponse.citati` (tip `Citat[]`). Ispod svakog AI odgovora, naslov `IZVORI (n)` sa ikonicom `BookOpen`. Svaki izvor je `<SourcePill>` koji prima jedan `Citat`:
 
-- Badge tipa (boja po tipu dokumenta), naziv (npr. *Zakon o parničnom postupku*), referenca (npr. *čl. 281, st. 1*), i % relevantnosti (poravnato desno, `tabular-nums`).
-- Klik otvara **bočni drawer** sa izvodom iz baze (puni tekst odredbe iz `pgvector`), relevantnošću i dugmetom *"Otvori cijeli dokument"*.
+- Badge tipa (boja po grupi — vidi 1.4), `naslov` (npr. *Zakon o parničnom postupku*), `referenca` (npr. *čl. 281, st. 1*; ako je `null`, izostaviti red reference), i `skor` kao % (poravnato desno, `tabular-nums`).
+- Klik otvara **bočni drawer** sa `isjecak` (tekst segmenta iz `pgvector`), `skor` i dugmetom *"Otvori cijeli dokument"* (vodi na `/document/:documentId`).
+
+Ako je `citati` prazan niz, **ne prikazivati odgovor kao pouzdan** — umjesto toga upozorenje (vidi UX invarijantu 1).
 
 Ispod izvora obavezna napomena: *"Provjeri izvore prije upotrebe — urednički nadzor ostaje obavezan."* (usklađeno sa AI etičkim principima RTCG).
 
@@ -147,19 +157,23 @@ HEADER  (logo · brojač: N dok. / M segmenata u pgvector · "Infrastruktura RTC
 
 - Veliki isprekidani obrub; na `dragover` → obrub i ikonica u akcentu, blaga pozadina `rgba(200,162,75,.06)`, sjenka.
 - Tekst: *"Prevuci dokumente ovdje"* / *"ili klikni za odabir — zakoni, presude, ugovori, interni akti"* / *"PDF · DOCX · TXT · RTF — automatska klasifikacija i OCR za skenirane dokumente"*.
-- Prihvata `multiple`. Na unos: pogađa tip iz imena fajla (heuristika: `zakon|propis` → `zakon`; `presuda|rješenje|rev|U.` → `presuda`; `ugovor` → `ugovor`; ostalo → `interni`).
+- Prihvata `multiple`. Backend pri unosu pogađa `DocumentType` (heuristika nad imenom/sadržajem); UI prima `IngestStatus.tip` i prikazuje ga kao prijedlog koji se može ispraviti.
 
 ### 4.3 Red u obradi (`<IngestItem>`)
 
-- Ikonica statusa, naziv, veličina + broj segmenata.
-- **Ručna korekcija tipa:** četiri kvadratna toggle dugmeta (jedan po tipu) — pravnik ispravlja auto-klasifikaciju prije/tokom obrade.
-- **Pipeline** (`<Pipeline>`): četiri faze — `Parsiranje → Chunking → Embedding → Indeksiranje`. Završene faze zelene sa kvačicom, aktivna u akcentu sa spinerom, buduće sive. Spojnice mijenjaju boju kako napreduje.
-- Po završetku red migrira iz *U obradi* u *Indeksirano*.
+Renderuje jedan `IngestStatus`.
+
+- Ikonica statusa (`IngestStatus.ocr === true` → indikator da je primijenjen OCR), `naziv`, veličina (`velicinaBajtova`) + `brojSegmenata`.
+- **Ručna korekcija klasifikacije:** padajući izbor `DocumentType` (9 vrijednosti) — pravnik ispravlja auto-klasifikaciju prije/tokom obrade; opciono i `LegalArea`. Promjena šalje `PATCH /api/ingest/:id` (`IngestPatchRequest`).
+- **Pipeline** (`<Pipeline>`): četiri faze iz `INGEST_STAGE_ORDER` — `PARSIRANJE → CHUNKING → EMBEDDING → INDEKSIRANJE`. Završene zelene sa kvačicom, aktivna u akcentu sa spinerom, buduće sive. Faza `GRESKA` → red crveno, prikazati `IngestStatus.greska`.
+- Po dostizanju `ZAVRSENO` red migrira iz *U obradi* u *Indeksirano*.
 
 ### 4.4 Tabela indeksiranih (`<DocTable>`)
 
-- Toolbar: pretraga po nazivu (`Search`) + filter chips po tipu (`Sve` + 4 tipa), selektovani chip u boji tipa.
-- Red: ikonica, naziv, meta (`veličina · N segmenata · datum`), badge tipa, status indikator *"indeksirano"* (zelena tačka), dugme za brisanje (`Trash2`, crveno na hover).
+Renderuje `DocumentMeta[]` (`GET /api/documents`).
+
+- Toolbar: pretraga po nazivu (`Search`) + filter chips. Dva nivoa filtera: po **grupi** (`Sve` + 4 grupe iz 1.4) i opciono po **oblasti** (`LegalArea`). Selektovani chip u boji grupe.
+- Red: ikonica, `naslov`, meta (`velicinaBajtova · brojSegmenata segmenata · datum`), `<TypeBadge>` (tačan `tip`, boja po grupi), badge `status` ako nije `VAZECI` (npr. *NACRT*, *VAN SNAGE*), status indikator *"indeksirano"* (zelena tačka), dugme za brisanje (`Trash2`, crveno na hover → `DELETE /api/documents/:id`).
 - Prazno stanje filtera: `FileSearch` + *"Nema dokumenata za zadati filter."*
 
 Footer: *"Dokumenti se segmentiraju i vektorizuju lokalno · embeddings se čuvaju u pgvector na infrastrukturi RTCG."*
@@ -171,93 +185,65 @@ Footer: *"Dokumenti se segmentiraju i vektorizuju lokalno · embeddings se čuva
 | Komponenta | Opis | Koristi se na |
 |---|---|---|
 | `<Logo>` | brend ikonica + naziv + podnaslov | svuda |
-| `<TypeBadge type size>` | badge tipa dokumenta | chat izvori, ingest tabela |
-| `<SourcePill source onClick>` | red izvora sa relevantnošću | chat odgovor |
-| `<SourceDrawer source onClose>` | bočni panel sa izvodom odredbe | chat |
-| `<Pipeline stage>` | 4-fazni indikator obrade | ingest |
-| `<IngestItem item>` | red dokumenta u obradi | ingest |
-| `<DocTable docs filter>` | tabela indeksiranih dokumenata | ingest |
+| `<TypeBadge tip size>` | badge tipa (`DocumentType`), boja po grupi | chat citati, ingest tabela |
+| `<SourcePill citat onClick>` | red izvora (`Citat`) sa skorom | chat odgovor |
+| `<SourceDrawer citat onClose>` | bočni panel sa `isjecak` | chat |
+| `<Pipeline faza>` | indikator obrade (`IngestStage`) | ingest |
+| `<IngestItem status>` | red dokumenta u obradi (`IngestStatus`) | ingest |
+| `<DocTable docs grupa oblast>` | tabela (`DocumentMeta[]`) | ingest |
 | `<Composer onSend>` | unos upita | chat |
 | `<EmptyState>` | brze akcije + primjeri | chat |
 
 ---
 
-## 6. Ugovor sa backendom (API tipovi → `@rtcg/shared`)
+## 6. Ugovor sa backendom
 
-UI očekuje sljedeće oblike. Tipove definisati u `shared` da ih dijele backend i frontend.
+**Svi tipovi su definisani u `shared/types.ts` (`@rtcg/shared`) — ovdje se NE redefinišu.** Ova sekcija samo mapira endpointe na tipove i opisuje kako ih UI koristi. Pri radu uvijek otvori `shared/types.ts` kao izvor istine.
 
-### 6.1 Tip dokumenta i izvor
+### 6.1 Endpointi → tipovi
 
-```ts
-export type DocType = 'zakon' | 'presuda' | 'ugovor' | 'interni';
+| Endpoint | Zahtjev | Odgovor | Ekran |
+|---|---|---|---|
+| `POST /api/qna` | `QnaRequest` | `QnaResponse` (ili SSE `QnaStreamEvent`) | Chat |
+| `POST /api/search` | `SearchRequest` | `SearchResponse` | brza akcija "Pretraga prakse" |
+| `POST /api/ingest` | multipart (fajlovi) | `IngestStatus[]` (po jedan po fajlu) | Ingest |
+| `GET /api/ingest/:id/stream` | — | SSE `IngestStatus` | Ingest |
+| `GET /api/ingest/:id` | — | `IngestStatus` | Ingest (polling fallback) |
+| `PATCH /api/ingest/:id` | `IngestPatchRequest` | `IngestStatus` | Ingest (korekcija klasifikacije) |
+| `GET /api/documents` | query filteri | `DocumentMeta[]` | Ingest tabela |
+| `DELETE /api/documents/:id` | — | `204` | Ingest tabela |
+| `GET /api/documents/:id` | — | `DocumentMeta` + segmenti | `/document/:id` (Faza 1.5) |
+| `GET /api/health` | — | `HealthResponse` | header indikator |
 
-export interface Source {
-  documentId: string;
-  type: DocType;
-  title: string;        // "Zakon o parničnom postupku"
-  ref: string;          // "čl. 281, st. 1"
-  relevance: number;    // 0..1 (cosine similarity)
-  excerpt: string;      // tekst segmenta iz pgvector
-}
-```
+Ne-2xx odgovori uvijek vraćaju `ApiError` (`{ kod, poruka }`); `poruka` se prikazuje korisniku.
 
-### 6.2 Q&A — `POST /api/query`
+### 6.2 Chat (Q&A)
 
-```ts
-// zahtjev
-interface QueryRequest { question: string; filters?: DocType[]; }
+`POST /api/qna` sa `QnaRequest`. UI renderuje `QnaResponse.odgovor` u Newsreader, a `citati` (`Citat[]`) kao `<SourcePill>` listu (vidi 3.4). `model` ide u header.
 
-// odgovor (streaming SSE ili JSON)
-interface QueryResponse {
-  answer: string;        // markdown/paragrafi
-  sources: Source[];     // za <SourceList>
-  model: string;         // "claude-sonnet-..." za prikaz u headeru
-}
-```
+**Streaming (preporučeno):** backend šalje `QnaStreamEvent` preko SSE — `token` (dopisuje tekst), `citati` (popunjava izvore), `kraj` (model + trajanje), `greska`. Do prvog `token` eventa composer prikazuje *"Pretražujem pravnu bazu…"*.
 
-UI renderuje `answer` u Newsreader, `sources` kao `<SourcePill>` listu. Ako backend streamuje, composer prikazuje stanje *"Pretražujem pravnu bazu…"* do prvog tokena.
+### 6.3 Unos (ingest)
 
-### 6.3 Unos — `POST /api/ingest` + status
+`POST /api/ingest` (multipart) → niz `IngestStatus` (po `id` za svaki fajl). Status uživo preko **SSE** `GET /api/ingest/:id/stream`, ili polling `GET /api/ingest/:id`. `<Pipeline>` mapira `IngestStatus.faza` na korake iz `INGEST_STAGE_ORDER`. Korekcija tipa/oblasti → `PATCH /api/ingest/:id` (`IngestPatchRequest`).
 
-```ts
-type IngestStage = 'parse' | 'chunk' | 'embed' | 'index' | 'done' | 'error';
+### 6.4 Baza dokumenata
 
-interface IngestStatus {
-  id: string;
-  name: string;
-  size: string;
-  type: DocType;         // auto-pogođen, korisnik može promijeniti
-  stage: IngestStage;
-  chunks: number;
-  error?: string;
-}
-```
+`GET /api/documents` vraća `DocumentMeta[]` (filteri kao query parametri — `tip`, `oblast`, `status`, pretraga po nazivu). `DELETE /api/documents/:id` uklanja dokument i njegove segmente iz `pgvector`.
 
-Tok: `POST /api/ingest` (multipart) → `id`; status preko **SSE** `GET /api/ingest/:id/stream` ili polling `GET /api/ingest/:id`. `<Pipeline>` mapira `stage` na korake. `PATCH /api/ingest/:id` za promjenu `type`.
+### 6.5 Health
 
-### 6.4 Baza — `GET /api/documents`
-
-```ts
-interface DocumentRow {
-  id: string; name: string; type: DocType;
-  size: string; chunks: number; indexedAt: string;
-}
-// + DELETE /api/documents/:id
-```
-
-### 6.5 Health — `GET /api/health`
-
-Početna provjera (već postoji): vraća status Postgres-a i `pgvector` ekstenzije. UI može prikazati diskretan indikator u headeru ako baza nije dostupna.
+`GET /api/health` → `HealthResponse` (već postoji): `postgres`, `pgvector`, `embeddings`, `verzija`. UI prikazuje diskretan indikator u headeru kada `status !== "ok"`.
 
 ---
 
 ## 7. Pravila ponašanja (UX invarijante)
 
-1. **Citiranje je obavezno.** AI odgovor bez izvora se ne prikazuje kao pouzdan — ako `sources` je prazan, prikazati upozorenje umjesto tihog odgovora.
+1. **Citiranje je obavezno.** AI odgovor bez izvora se ne prikazuje kao pouzdan — ako je `QnaResponse.citati` prazan, prikazati upozorenje umjesto tihog odgovora.
 2. **Urednički nadzor.** Disclaimer o ljudskoj provjeri vidljiv uz svaki odgovor. Odgovori nisu pravni savjet.
 3. **Sovereign poruka.** Na vidljivom mjestu (sidebar + ingest footer) stoji da podaci ostaju na infrastrukturi RTCG.
 4. **Crnogorski jezik, dosljedna terminologija:** *verifikovanih* (ne *verificiranih*), *zaposleni* (ne *zaposlenik*), *urednički nadzor*, *najbolje prakse*, *rezultovati*.
-5. **Tip dokumenta je jedan izvor istine** — boje i ikonice identične na svim ekranima.
+5. **Taksonomija je jedan izvor istine.** `DocumentType` se nikad ne redefiniše u UI-u; boje/ikonice idu preko `DocumentGroup` mape (`src/lib/docTypes.ts`), identično na svim ekranima.
 
 ---
 
