@@ -44,6 +44,19 @@ export const DocumentStatus = {
 } as const;
 export type DocumentStatus = (typeof DocumentStatus)[keyof typeof DocumentStatus];
 
+/**
+ * Vizuelne grupe za UI (boja/ikonica). Više DocumentType vrijednosti
+ * mapira se na jednu grupu — npr. obje vrste ugovora u UGOVOR.
+ * Mapiranje DocumentType -> DocumentGroup drži frontend, ne shared.
+ */
+export const DocumentGroup = {
+  PROPIS: "PROPIS",   // ZAKON, PODZAKONSKI_AKT
+  PRAKSA: "PRAKSA",   // PRESUDA, SUDSKA_PRAKSA, MISLJENJE
+  UGOVOR: "UGOVOR",   // UGOVOR_O_RADU, UGOVOR_JAVNA_NABAVKA
+  INTERNI: "INTERNI", // INTERNI_AKT, OSTALO
+} as const;
+export type DocumentGroup = (typeof DocumentGroup)[keyof typeof DocumentGroup];
+
 // ---------------------------------------------------------------------------
 // Document model (API view)
 // ---------------------------------------------------------------------------
@@ -60,6 +73,7 @@ export interface DocumentMeta {
   jezik: "sr-Cyrl" | "sr-Latn" | "mixed";
   brojStrana: number | null;
   velicinaBajtova: number | null;
+  brojSegmenata: number; // broj chunkova u pgvector
   kreirano: string; // ISO timestamp
   azurirano: string; // ISO timestamp
 }
@@ -85,13 +99,89 @@ export interface SearchHit {
   chunkId: string;
   naslov: string;
   isjecak: string;
-  skor: number;
+  skor: number; // 0..1, cosine similarity
+  referenca: string | null; // "čl. 281, st. 1" — ako je izvučeno iz strukture
   metapodaci: Pick<DocumentMeta, "tip" | "oblast" | "datum" | "organSud">;
 }
 
 export interface SearchResponse {
   pogoci: SearchHit[];
   trajanjeMs: number;
+}
+
+// ---------------------------------------------------------------------------
+// Q&A (generisani odgovor sa citiranjem) — chat ekran
+// ---------------------------------------------------------------------------
+
+/** Citiran izvor uz AI odgovor. Izveden iz SearchHit, obogaćen za prikaz. */
+export interface Citat {
+  documentId: string;
+  chunkId: string;
+  naslov: string; // "Zakon o parničnom postupku"
+  referenca: string | null; // "čl. 281, st. 1"
+  isjecak: string;
+  skor: number; // 0..1
+  tip: DocumentType;
+}
+
+export interface QnaRequest {
+  pitanje: string;
+  filteri?: SearchRequest["filteri"];
+}
+
+/** Konačan odgovor (JSON ili završni SSE event). */
+export interface QnaResponse {
+  odgovor: string; // markdown / paragrafi
+  citati: Citat[]; // prazno => UI prikazuje upozorenje, ne tihi odgovor
+  model: string; // npr. "claude-sonnet-4-..."
+  trajanjeMs: number;
+}
+
+/** SSE event tokom streaminga Q&A odgovora. */
+export type QnaStreamEvent =
+  | { tip: "token"; tekst: string }
+  | { tip: "citati"; citati: Citat[] }
+  | { tip: "kraj"; model: string; trajanjeMs: number }
+  | { tip: "greska"; poruka: string };
+
+// ---------------------------------------------------------------------------
+// Unos dokumenata (ingest)
+// ---------------------------------------------------------------------------
+
+export const IngestStage = {
+  PARSIRANJE: "PARSIRANJE",
+  CHUNKING: "CHUNKING",
+  EMBEDDING: "EMBEDDING",
+  INDEKSIRANJE: "INDEKSIRANJE",
+  ZAVRSENO: "ZAVRSENO",
+  GRESKA: "GRESKA",
+} as const;
+export type IngestStage = (typeof IngestStage)[keyof typeof IngestStage];
+
+/** Redoslijed faza za prikaz progresa (<Pipeline>). */
+export const INGEST_STAGE_ORDER: readonly IngestStage[] = [
+  IngestStage.PARSIRANJE,
+  IngestStage.CHUNKING,
+  IngestStage.EMBEDDING,
+  IngestStage.INDEKSIRANJE,
+] as const;
+
+export interface IngestStatus {
+  id: string;
+  naziv: string;
+  velicinaBajtova: number | null;
+  tip: DocumentType; // auto-pogođen pri unosu, korisnik može promijeniti
+  oblast: LegalArea | null; // opciono klasifikovano
+  faza: IngestStage;
+  brojSegmenata: number; // raste kroz faze
+  ocr: boolean; // da li je primijenjen OCR (skeniran dokument)
+  greska: string | null; // popunjeno kada faza === GRESKA
+}
+
+/** Izmjena klasifikacije prije/tokom obrade — PATCH /api/ingest/:id */
+export interface IngestPatchRequest {
+  tip?: DocumentType;
+  oblast?: LegalArea;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,4 +195,14 @@ export interface HealthResponse {
   pgvector: "ok" | "missing";
   embeddings: "ok" | "loading" | "down";
   verzija: string;
+}
+
+// ---------------------------------------------------------------------------
+// Greške
+// ---------------------------------------------------------------------------
+
+/** Jedinstven oblik greške koji API vraća uz ne-2xx status. */
+export interface ApiError {
+  kod: string; // mašinski čitljiv, npr. "INGEST_FAILED"
+  poruka: string; // poruka za korisnika, na crnogorskom
 }
