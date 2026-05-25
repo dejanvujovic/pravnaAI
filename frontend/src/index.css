@@ -1,19 +1,78 @@
-:root {
-  color-scheme: light dark;
+@import "./styles/tokens.css";
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-serif);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  color-scheme: dark;
 }
 
-body {
-  margin: 0;
-  background: #fafafa;
-  color: #1a1a1a;
+/* Kontrole UI-a koriste sans-serif (UI-SPEC §1.2). */
+button,
+input,
+textarea,
+select,
+.ui-sans {
+  font-family: var(--font-sans);
 }
 
-@media (prefers-color-scheme: dark) {
-  body {
-    background: #111;
-    color: #e6e6e6;
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* Animacije */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
   }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes bounce-dot {
+  0%, 80%, 100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+.fadeup {
+  animation: fadeUp 0.35s ease both;
+}
+
+/* Custom scrollbar — diskretan u dark temi. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--panel-2);
 }

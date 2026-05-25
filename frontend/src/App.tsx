@@ -1,43 +1,175 @@
-import { useEffect, useState } from "react";
-import type { HealthResponse } from "@rtcg/shared";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { Citat } from "@rtcg/shared";
+import { Logo } from "./components/Logo.js";
+import { Composer } from "./components/Composer.js";
+import { EmptyState } from "./components/EmptyState.js";
+import { AiMessage, UserMessage } from "./components/Message.js";
+import { QnaApiError, streamQna } from "./lib/api.js";
+
+interface UserMsg {
+  uloga: "user";
+  tekst: string;
+}
+interface AiMsg {
+  uloga: "ai";
+  tekst: string;
+  citati: Citat[];
+  status: "streaming" | "kraj" | "greska";
+  greska?: string;
+  trajanjeMs?: number;
+}
+type Poruka = UserMsg | AiMsg;
 
 export function App() {
-  const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [greska, setGreska] = useState<string | null>(null);
+  const [poruke, setPoruke] = useState<Poruka[]>([]);
+  const [obrada, setObrada] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
+  // Auto-scroll na dno kad poruke rastu.
   useEffect(() => {
-    fetch("/api/health")
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json() as Promise<HealthResponse>;
-      })
-      .then(setHealth)
-      .catch((e: unknown) => setGreska(e instanceof Error ? e.message : String(e)));
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [poruke]);
+
+  // Otkaži aktivan stream pri unmount-u.
+  useEffect(() => {
+    return () => abortRef.current?.abort();
   }, []);
 
-  return (
-    <main style={{ fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 720 }}>
-      <h1>RTCG Legal AI</h1>
-      <p style={{ color: "#555" }}>
-        Interni sistem pravne službe Radio-televizije Crne Gore.
-      </p>
+  const posaljiPitanje = useCallback(
+    async (pitanje: string) => {
+      if (obrada) return;
+      setObrada(true);
 
-      <section style={{ marginTop: "2rem" }}>
-        <h2>Stanje sistema</h2>
-        {greska && <p style={{ color: "#b00020" }}>Greška: {greska}</p>}
-        {!greska && !health && <p>Provjera...</p>}
-        {health && (
-          <ul>
-            <li>Status: <strong>{health.status}</strong></li>
-            <li>PostgreSQL: {health.postgres}</li>
-            <li>pgvector: {health.pgvector}</li>
-            <li>Embeddings (BGE-M3): {health.embeddings}</li>
-            <li>OCR (Tesseract): {health.ocr}</li>
-            <li>Verzija: {health.verzija}</li>
-            <li>Vrijeme: {new Date(health.vrijeme).toLocaleString("sr-Latn-ME")}</li>
-          </ul>
+      // Dodaj user poruku + placeholder AI poruku odmah.
+      setPoruke((p) => [
+        ...p,
+        { uloga: "user", tekst: pitanje },
+        { uloga: "ai", tekst: "", citati: [], status: "streaming" },
+      ]);
+
+      // Helper: izmijeni poslednju AI poruku.
+      const azuriraj = (mut: (m: AiMsg) => AiMsg) => {
+        setPoruke((p) => {
+          const kopija = [...p];
+          for (let i = kopija.length - 1; i >= 0; i--) {
+            if (kopija[i]!.uloga === "ai") {
+              kopija[i] = mut(kopija[i] as AiMsg);
+              break;
+            }
+          }
+          return kopija;
+        });
+      };
+
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+
+      try {
+        for await (const ev of streamQna({ pitanje }, ctrl.signal)) {
+          if (ev.tip === "citati") {
+            azuriraj((m) => ({ ...m, citati: ev.citati }));
+          } else if (ev.tip === "token") {
+            azuriraj((m) => ({ ...m, tekst: m.tekst + ev.tekst }));
+          } else if (ev.tip === "kraj") {
+            azuriraj((m) => ({
+              ...m,
+              status: "kraj",
+              trajanjeMs: ev.trajanjeMs,
+            }));
+          } else if (ev.tip === "greska") {
+            azuriraj((m) => ({ ...m, status: "greska", greska: ev.poruka }));
+          }
+        }
+      } catch (e) {
+        if (ctrl.signal.aborted) return; // tihi otkaz
+        const poruka =
+          e instanceof QnaApiError
+            ? e.message
+            : e instanceof Error
+              ? e.message
+              : "Nepoznata greška u komunikaciji sa serverom.";
+        azuriraj((m) => ({ ...m, status: "greska", greska: poruka }));
+      } finally {
+        setObrada(false);
+        abortRef.current = null;
+      }
+    },
+    [obrada],
+  );
+
+  const prazno = poruke.length === 0;
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100vh",
+        background: "var(--bg)",
+      }}
+    >
+      {/* Header */}
+      <header
+        style={{
+          padding: "14px 24px",
+          borderBottom: "1px solid var(--border)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          background: "var(--panel)",
+        }}
+      >
+        <Logo />
+        <span
+          className="ui-sans"
+          style={{
+            fontSize: 11,
+            color: "var(--muted)",
+            letterSpacing: ".05em",
+          }}
+        >
+          Infrastruktura RTCG · podaci ne napuštaju mrežu
+        </span>
+      </header>
+
+      {/* Scrollabilan sadržaj (empty state ili razgovor) */}
+      <div ref={scrollRef} style={{ flex: 1, overflowY: "auto" }}>
+        {prazno ? (
+          <EmptyState onPredlog={posaljiPitanje} />
+        ) : (
+          <div style={{ maxWidth: 760, margin: "0 auto", padding: "26px 24px 40px" }}>
+            {poruke.map((p, i) =>
+              p.uloga === "user" ? (
+                <UserMessage key={i} tekst={p.tekst} />
+              ) : (
+                <AiMessage
+                  key={i}
+                  tekst={p.tekst}
+                  citati={p.citati}
+                  status={p.status}
+                  {...(p.greska !== undefined && { greska: p.greska })}
+                  {...(p.trajanjeMs !== undefined && {
+                    trajanjeMs: p.trajanjeMs,
+                  })}
+                />
+              ),
+            )}
+          </div>
         )}
-      </section>
-    </main>
+      </div>
+
+      {/* Composer fiksiran na dnu */}
+      <div
+        style={{
+          paddingTop: 8,
+          background: "linear-gradient(180deg, transparent, var(--bg) 30%)",
+        }}
+      >
+        <Composer onSend={posaljiPitanje} disabled={obrada} />
+      </div>
+    </div>
   );
 }
