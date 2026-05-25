@@ -1,5 +1,5 @@
-import { useCallback, useRef, useState } from "react";
-import { FileUp, Upload as UploadIcon, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { FileUp, Loader2, Sparkles, Upload as UploadIcon, X } from "lucide-react";
 import {
   DocumentStatus,
   DocumentType,
@@ -7,7 +7,7 @@ import {
   type DocumentMeta,
 } from "@rtcg/shared";
 import { TIP_META } from "../lib/docTypes.js";
-import { DocumentsApiError, uploadDokument } from "../lib/api.js";
+import { DocumentsApiError, analyzeDokument, uploadDokument } from "../lib/api.js";
 
 const MAX_FILE_MB = 50;
 const ALLOWED_MIMETYPES = new Set([
@@ -57,7 +57,7 @@ const PRAZNA_FORMA: FormState = {
   datum: "",
   organSud: "",
   brojSluzbenogLista: "",
-  jezik: "mixed",
+  jezik: "sr-Latn",
 };
 
 /**
@@ -76,7 +76,17 @@ export function Upload({ onUploadGotov }: Props) {
   const [salje, setSalje] = useState(false);
   const [greska, setGreska] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [analiza, setAnaliza] = useState<"idle" | "uTeku" | "gotovo" | "greska">("idle");
+  const [autoPopunjenaPolja, setAutoPopunjenaPolja] = useState<Set<keyof FormState>>(
+    new Set(),
+  );
   const inputRef = useRef<HTMLInputElement>(null);
+  const analyzeAbortRef = useRef<AbortController | null>(null);
+
+  // Otkaži aktivnu analizu pri unmount-u ili promjeni fajla.
+  useEffect(() => {
+    return () => analyzeAbortRef.current?.abort();
+  }, []);
 
   const odaberi = useCallback((f: File) => {
     setGreska(null);
@@ -90,6 +100,61 @@ export function Upload({ onUploadGotov }: Props) {
     }
     setFajl(f);
     setForma((s) => ({ ...s, naslov: s.naslov || predloziNaslov(f.name) }));
+    setAutoPopunjenaPolja(new Set());
+
+    // Pokreni heurističku analizu u pozadini — prefiluj polja koja korisnik
+    // još nije promijenio. Otkazi prethodnu ako je u toku.
+    analyzeAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    analyzeAbortRef.current = ctrl;
+    setAnaliza("uTeku");
+    analyzeDokument(f, ctrl.signal)
+      .then((predlog) => {
+        if (ctrl.signal.aborted) return;
+        const auto = new Set<keyof FormState>();
+        setForma((s) => {
+          const novo: FormState = { ...s };
+          // Naslov pregazi predlogom iz filename-a (predloziNaslov), ali samo
+          // ako sam predlog izgleda kao stvarni naslov dokumenta (počinje sa
+          // tipom dokumenta — "Zakon", "Uredba", itd.).
+          if (predlog.naslov && /^(Zakon|Uredba|Pravilnik|Odluka|Naredba|Uputstvo|Presuda|Rješenje|Mišljenje)\s/i.test(predlog.naslov)) {
+            novo.naslov = predlog.naslov;
+            auto.add("naslov");
+          }
+          if (predlog.tip) {
+            novo.tip = predlog.tip;
+            auto.add("tip");
+          }
+          if (predlog.oblast) {
+            novo.oblast = predlog.oblast;
+            auto.add("oblast");
+          }
+          if (predlog.datum && !s.datum) {
+            novo.datum = predlog.datum;
+            auto.add("datum");
+          }
+          if (predlog.organSud && !s.organSud) {
+            novo.organSud = predlog.organSud;
+            auto.add("organSud");
+          }
+          if (predlog.brojSluzbenogLista && !s.brojSluzbenogLista) {
+            novo.brojSluzbenogLista = predlog.brojSluzbenogLista;
+            auto.add("brojSluzbenogLista");
+          }
+          if (predlog.jezik) {
+            novo.jezik = predlog.jezik;
+            auto.add("jezik");
+          }
+          return novo;
+        });
+        setAutoPopunjenaPolja(auto);
+        setAnaliza("gotovo");
+      })
+      .catch((e) => {
+        if (ctrl.signal.aborted) return;
+        console.warn("[analyze] neuspjelo:", e);
+        setAnaliza("greska");
+      });
   }, []);
 
   const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -100,11 +165,38 @@ export function Upload({ onUploadGotov }: Props) {
   };
 
   const obrisi = () => {
+    analyzeAbortRef.current?.abort();
     setFajl(null);
     setForma(PRAZNA_FORMA);
     setGreska(null);
+    setAnaliza("idle");
+    setAutoPopunjenaPolja(new Set());
     if (inputRef.current) inputRef.current.value = "";
   };
+
+  /**
+   * Kad korisnik ručno promijeni polje, skidamo "auto" oznaku — nije više
+   * heuristička sugestija nego unos korisnika.
+   */
+  const izmijeniPolje = <K extends keyof FormState>(kljuc: K, vrijednost: FormState[K]) => {
+    setForma((s) => ({ ...s, [kljuc]: vrijednost }));
+    if (autoPopunjenaPolja.has(kljuc)) {
+      setAutoPopunjenaPolja((prev) => {
+        const next = new Set(prev);
+        next.delete(kljuc);
+        return next;
+      });
+    }
+  };
+
+  const inputStyleZa = (polje: keyof FormState): React.CSSProperties =>
+    autoPopunjenaPolja.has(polje)
+      ? {
+          ...inputStyle,
+          borderColor: "color-mix(in srgb, var(--accent) 60%, var(--border))",
+          background: "color-mix(in srgb, var(--accent) 4%, var(--bg))",
+        }
+      : inputStyle;
 
   const posalji = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -257,6 +349,53 @@ export function Upload({ onUploadGotov }: Props) {
             </button>
           </div>
 
+          {/* Indikator analize. */}
+          {analiza !== "idle" && (
+            <div
+              className="ui-sans"
+              style={{
+                marginBottom: 16,
+                padding: "9px 14px",
+                background:
+                  analiza === "gotovo" && autoPopunjenaPolja.size > 0
+                    ? "color-mix(in srgb, var(--accent) 8%, var(--panel-2))"
+                    : "var(--panel-2)",
+                border:
+                  analiza === "gotovo" && autoPopunjenaPolja.size > 0
+                    ? "1px solid color-mix(in srgb, var(--accent) 40%, var(--border))"
+                    : "1px solid var(--border)",
+                borderRadius: "var(--r-button)",
+                fontSize: 12.5,
+                color: "var(--muted)",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              {analiza === "uTeku" && (
+                <>
+                  <Loader2 size={13} className="spin" />
+                  <span>Analiziram dokument…</span>
+                </>
+              )}
+              {analiza === "gotovo" && autoPopunjenaPolja.size > 0 && (
+                <>
+                  <Sparkles size={13} color="var(--accent)" />
+                  <span>
+                    Automatski popunjeno {autoPopunjenaPolja.size}{" "}
+                    {autoPopunjenaPolja.size === 1 ? "polje" : "polja"} — pregledaj prije slanja.
+                  </span>
+                </>
+              )}
+              {analiza === "gotovo" && autoPopunjenaPolja.size === 0 && (
+                <span>Heuristika nije našla pouzdane metapodatke — popuni ručno.</span>
+              )}
+              {analiza === "greska" && (
+                <span>Analiza nije uspjela — možeš nastaviti i ručno popuniti formu.</span>
+              )}
+            </div>
+          )}
+
           <div
             style={{
               display: "grid",
@@ -264,26 +403,24 @@ export function Upload({ onUploadGotov }: Props) {
               gap: 14,
             }}
           >
-            <Polje label="Naslov" obavezno span={2}>
+            <Polje label="Naslov" obavezno span={2} autoPopunjen={autoPopunjenaPolja.has("naslov")}>
               <input
                 type="text"
                 value={forma.naslov}
-                onChange={(e) => setForma({ ...forma, naslov: e.target.value })}
+                onChange={(e) => izmijeniPolje("naslov", e.target.value)}
                 disabled={salje}
                 maxLength={500}
-                style={inputStyle}
+                style={inputStyleZa("naslov")}
                 required
               />
             </Polje>
 
-            <Polje label="Tip dokumenta" obavezno>
+            <Polje label="Tip dokumenta" obavezno autoPopunjen={autoPopunjenaPolja.has("tip")}>
               <select
                 value={forma.tip}
-                onChange={(e) =>
-                  setForma({ ...forma, tip: e.target.value as DocumentType })
-                }
+                onChange={(e) => izmijeniPolje("tip", e.target.value as DocumentType)}
                 disabled={salje}
-                style={inputStyle}
+                style={inputStyleZa("tip")}
               >
                 {Object.entries(TIP_META).map(([k, v]) => (
                   <option key={k} value={k}>
@@ -293,14 +430,12 @@ export function Upload({ onUploadGotov }: Props) {
               </select>
             </Polje>
 
-            <Polje label="Pravna oblast" obavezno>
+            <Polje label="Pravna oblast" obavezno autoPopunjen={autoPopunjenaPolja.has("oblast")}>
               <select
                 value={forma.oblast}
-                onChange={(e) =>
-                  setForma({ ...forma, oblast: e.target.value as LegalArea })
-                }
+                onChange={(e) => izmijeniPolje("oblast", e.target.value as LegalArea)}
                 disabled={salje}
-                style={inputStyle}
+                style={inputStyleZa("oblast")}
               >
                 {Object.entries(OBLAST_LABELS).map(([k, v]) => (
                   <option key={k} value={k}>
@@ -313,9 +448,7 @@ export function Upload({ onUploadGotov }: Props) {
             <Polje label="Status">
               <select
                 value={forma.status}
-                onChange={(e) =>
-                  setForma({ ...forma, status: e.target.value as DocumentStatus })
-                }
+                onChange={(e) => izmijeniPolje("status", e.target.value as DocumentStatus)}
                 disabled={salje}
                 style={inputStyle}
               >
@@ -327,54 +460,50 @@ export function Upload({ onUploadGotov }: Props) {
               </select>
             </Polje>
 
-            <Polje label="Datum donošenja">
+            <Polje label="Datum donošenja" autoPopunjen={autoPopunjenaPolja.has("datum")}>
               <input
                 type="date"
                 value={forma.datum}
-                onChange={(e) => setForma({ ...forma, datum: e.target.value })}
+                onChange={(e) => izmijeniPolje("datum", e.target.value)}
                 disabled={salje}
-                style={inputStyle}
+                style={inputStyleZa("datum")}
               />
             </Polje>
 
-            <Polje label="Organ / sud">
+            <Polje label="Organ / sud" autoPopunjen={autoPopunjenaPolja.has("organSud")}>
               <input
                 type="text"
                 value={forma.organSud}
-                onChange={(e) => setForma({ ...forma, organSud: e.target.value })}
+                onChange={(e) => izmijeniPolje("organSud", e.target.value)}
                 disabled={salje}
                 maxLength={255}
                 placeholder="npr. Vrhovni sud Crne Gore"
-                style={inputStyle}
+                style={inputStyleZa("organSud")}
               />
             </Polje>
 
-            <Polje label="Broj službenog lista">
+            <Polje label="Broj službenog lista" autoPopunjen={autoPopunjenaPolja.has("brojSluzbenogLista")}>
               <input
                 type="text"
                 value={forma.brojSluzbenogLista}
-                onChange={(e) =>
-                  setForma({ ...forma, brojSluzbenogLista: e.target.value })
-                }
+                onChange={(e) => izmijeniPolje("brojSluzbenogLista", e.target.value)}
                 disabled={salje}
                 maxLength={100}
                 placeholder="npr. 74/2010, 40/2011"
-                style={inputStyle}
+                style={inputStyleZa("brojSluzbenogLista")}
               />
             </Polje>
 
-            <Polje label="Pismo">
+            <Polje label="Pismo" autoPopunjen={autoPopunjenaPolja.has("jezik")}>
               <select
                 value={forma.jezik}
-                onChange={(e) =>
-                  setForma({ ...forma, jezik: e.target.value as FormState["jezik"] })
-                }
+                onChange={(e) => izmijeniPolje("jezik", e.target.value as FormState["jezik"])}
                 disabled={salje}
-                style={inputStyle}
+                style={inputStyleZa("jezik")}
               >
-                <option value="mixed">Mješovito</option>
                 <option value="sr-Latn">Latinica</option>
                 <option value="sr-Cyrl">Ćirilica</option>
+                <option value="mixed">Mješovito</option>
               </select>
             </Polje>
           </div>
@@ -476,10 +605,11 @@ interface PoljeProps {
   label: string;
   obavezno?: boolean;
   span?: 1 | 2;
+  autoPopunjen?: boolean;
   children: React.ReactNode;
 }
 
-function Polje({ label, obavezno, span = 1, children }: PoljeProps) {
+function Polje({ label, obavezno, span = 1, autoPopunjen, children }: PoljeProps) {
   return (
     <label style={{ display: "block", gridColumn: span === 2 ? "1 / -1" : undefined }}>
       <div
@@ -491,10 +621,22 @@ function Polje({ label, obavezno, span = 1, children }: PoljeProps) {
           fontWeight: 600,
           marginBottom: 6,
           textTransform: "uppercase",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
         }}
       >
-        {label}
-        {obavezno && <span style={{ color: "var(--accent)" }}> *</span>}
+        <span>
+          {label}
+          {obavezno && <span style={{ color: "var(--accent)" }}> *</span>}
+        </span>
+        {autoPopunjen && (
+          <Sparkles
+            size={10}
+            color="var(--accent)"
+            aria-label="Automatski popunjeno"
+          />
+        )}
       </div>
       {children}
     </label>

@@ -27,6 +27,7 @@ import {
 import { logIngest } from "../services/audit.js";
 import { ParserError, SUPPORTED_MIMETYPES, parseFile } from "../services/parser.js";
 import { scheduleIngest } from "../services/ingest_worker.js";
+import { analyze } from "../services/analyzer.js";
 
 // ---------------------------------------------------------------------------
 // Multer (memory storage; fajlovi do 50 MB)
@@ -152,6 +153,48 @@ function isUniqueViolation(e: unknown, constraint: string): e is PgError {
 // ---------------------------------------------------------------------------
 
 export const documentsRouter = Router();
+
+// ---------------------------------------------------------------------------
+// POST /api/documents/analyze — heuristički predlog metapodataka iz fajla
+// Ne snima fajl, ne loguje u audit, ne dira DB. Cilj je samo prefilovanje
+// upload forme da korisnik unese manje polja ručno.
+// ---------------------------------------------------------------------------
+
+documentsRouter.post(
+  "/analyze",
+  upload.single("file"),
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.file) {
+      res.status(400).json({ greska: "Fajl nije priložen u polju 'file'." });
+      return;
+    }
+    if (req.file.size === 0) {
+      res.status(400).json({ greska: "Fajl je prazan." });
+      return;
+    }
+    if (!ALLOWED_MIMETYPES.has(req.file.mimetype)) {
+      res.status(415).json({
+        greska: `Nepodržan format: ${req.file.mimetype}. Dozvoljeno: PDF i DOCX.`,
+      });
+      return;
+    }
+
+    try {
+      const parsed = await parseFile(
+        req.file.buffer,
+        req.file.mimetype,
+        req.file.originalname,
+      );
+      const predlog = analyze(parsed.tekst);
+      res.json(predlog);
+    } catch (e) {
+      res.status(422).json({
+        greska: "Fajl nije moguće parsirati kao validan PDF/DOCX.",
+        detalji: e instanceof ParserError ? e.message : undefined,
+      });
+    }
+  },
+);
 
 documentsRouter.post(
   "/",
