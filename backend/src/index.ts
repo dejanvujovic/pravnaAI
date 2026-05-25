@@ -9,6 +9,7 @@ import { pingOcr } from "./services/ocr.js";
 import { recoverStaleIngests } from "./services/ingest_worker.js";
 import { documentsRouter } from "./routes/documents.js";
 import { searchRouter } from "./routes/search.js";
+import { qnaRouter } from "./routes/qna.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const app = express();
@@ -18,6 +19,7 @@ app.use(express.json({ limit: "10mb" }));
 
 app.use("/api/documents", documentsRouter);
 app.use("/api/search", searchRouter);
+app.use("/api/qna", qnaRouter);
 
 app.get("/api/health", async (_req, res) => {
   const [pg, vec, emb, ocr] = await Promise.all([
