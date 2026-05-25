@@ -8,6 +8,7 @@
 
 import type {
   AnalyzeResponse,
+  ChunkDetail,
   DocumentListQuery,
   DocumentListResponse,
   DocumentMeta,
@@ -199,6 +200,13 @@ export async function patchDokument(
   });
   if (!r.ok) throw await obradiGreskuOdgovora(r);
   return (await r.json()) as DocumentMeta;
+}
+
+/** GET /api/chunks/:id — puni sadržaj chunka + metapodaci dokumenta. */
+export async function getChunk(id: string, signal?: AbortSignal): Promise<ChunkDetail> {
+  const r = await fetch(`${API_BASE}/api/chunks/${id}`, { signal });
+  if (!r.ok) throw await obradiGreskuOdgovora(r);
+  return (await r.json()) as ChunkDetail;
 }
 
 /**

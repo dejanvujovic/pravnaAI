@@ -33,9 +33,10 @@ interface AiMsgProps {
   status: "streaming" | "kraj" | "greska";
   greska?: string;
   trajanjeMs?: number;
+  onClickCitat?: (citat: Citat) => void;
 }
 
-export function AiMessage({ tekst, citati, status, greska }: AiMsgProps) {
+export function AiMessage({ tekst, citati, status, greska, onClickCitat }: AiMsgProps) {
   const ucitavanje = status === "streaming" && tekst.length === 0;
   const imaCitate = citati.length > 0;
 
@@ -78,7 +79,12 @@ export function AiMessage({ tekst, citati, status, greska }: AiMsgProps) {
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {citati.map((c, i) => (
-                <SourcePill key={c.chunkId} citat={c} redni_broj={i + 1} />
+                <SourcePill
+                  key={c.chunkId}
+                  citat={c}
+                  redni_broj={i + 1}
+                  {...(onClickCitat && { onClick: onClickCitat })}
+                />
               ))}
             </div>
           </div>

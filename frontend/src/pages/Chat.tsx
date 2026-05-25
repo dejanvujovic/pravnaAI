@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Citat } from "@rtcg/shared";
+import type { Citat, QnaPoruka } from "@rtcg/shared";
 import { Composer } from "../components/Composer.js";
 import { EmptyState } from "../components/EmptyState.js";
 import { AiMessage, UserMessage } from "../components/Message.js";
+import { SourceDrawer } from "../components/SourceDrawer.js";
 import { QnaApiError, streamQna } from "../lib/api.js";
 
 interface UserMsg {
@@ -22,6 +23,7 @@ type Poruka = UserMsg | AiMsg;
 export function Chat() {
   const [poruke, setPoruke] = useState<Poruka[]>([]);
   const [obrada, setObrada] = useState(false);
+  const [otvoreniCitat, setOtvoreniCitat] = useState<Citat | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -41,6 +43,13 @@ export function Chat() {
     async (pitanje: string) => {
       if (obrada) return;
       setObrada(true);
+
+      // Snimi istoriju prije nego dodaš novu poruku — istorija = sve
+      // prethodne razmjene, bez trenutnog pitanja i bez "greska" AI poruka
+      // (njih nije korisno slati Claude-u kao kontekst).
+      const istorija: QnaPoruka[] = poruke
+        .filter((p) => p.uloga === "user" || (p.uloga === "ai" && p.status === "kraj" && p.tekst.length > 0))
+        .map((p) => ({ uloga: p.uloga, tekst: p.tekst }));
 
       setPoruke((p) => [
         ...p,
@@ -65,7 +74,8 @@ export function Chat() {
       abortRef.current = ctrl;
 
       try {
-        for await (const ev of streamQna({ pitanje }, ctrl.signal)) {
+        const req = istorija.length > 0 ? { pitanje, istorija } : { pitanje };
+        for await (const ev of streamQna(req, ctrl.signal)) {
           if (ev.tip === "citati") {
             azuriraj((m) => ({ ...m, citati: ev.citati }));
           } else if (ev.tip === "token") {
@@ -94,7 +104,7 @@ export function Chat() {
         abortRef.current = null;
       }
     },
-    [obrada],
+    [obrada, poruke],
   );
 
   const prazno = poruke.length === 0;
@@ -115,6 +125,7 @@ export function Chat() {
                   tekst={p.tekst}
                   citati={p.citati}
                   status={p.status}
+                  onClickCitat={setOtvoreniCitat}
                   {...(p.greska !== undefined && { greska: p.greska })}
                   {...(p.trajanjeMs !== undefined && {
                     trajanjeMs: p.trajanjeMs,
@@ -134,6 +145,8 @@ export function Chat() {
       >
         <Composer onSend={posaljiPitanje} disabled={obrada} />
       </div>
+
+      <SourceDrawer citat={otvoreniCitat} onZatvori={() => setOtvoreniCitat(null)} />
     </div>
   );
 }

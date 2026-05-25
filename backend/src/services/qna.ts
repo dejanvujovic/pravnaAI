@@ -20,6 +20,7 @@
 import type {
   Citat,
   DocumentType,
+  QnaPoruka,
   QnaRequest,
   QnaStreamEvent,
   SearchHit,
@@ -30,6 +31,18 @@ import { search } from "./search.js";
 const DEFAULT_KONTEKST_K = 8;
 const MAX_KONTEKST_K = 15;
 const MAX_TOKENS = 1024;
+/**
+ * Maksimalan broj prethodnih poruka koje šaljemo Claude-u kao istoriju.
+ * Šest = oko 3 razmjene; više od toga znači viši cost i veću šansu da
+ * cache promaši. Sjeku se najstarije poruke.
+ */
+const MAX_ISTORIJA = 6;
+/**
+ * Ispod ovoliko karaktera, trenutno pitanje smatramo follow-up-om i
+ * dodajemo zadnje korisnikovo pitanje u search query da RAG ne luta
+ * (npr. "samo u zakonu o medijima" sa 24 karaktera).
+ */
+const FOLLOWUP_PRAG = 60;
 
 const SYSTEM_PROMPT = `Ti si pravni asistent pravne službe Radio-televizije Crne Gore (RTCG).
 Tvoj zadatak je da odgovaraš na pravna pitanja korisnika koristeći ISKLJUČIVO
@@ -46,7 +59,10 @@ Pravila:
    dokumenata ne mogu dati odgovor." Ne izmišljaj članove, datume ili pravila.
 4. Ne daj pravni savjet. Tvoj odgovor je informativan i mora biti provjeren od
    strane pravnika prije primjene.
-5. Budi sažet — pravnik već zna kontekst, treba mu suština.`;
+5. Budi sažet — pravnik već zna kontekst, treba mu suština.
+6. Prethodne poruke razgovora služe samo za kontekst; brojevi citata
+   [1]..[N] uvijek se odnose ISKLJUČIVO na isječke u TRENUTNOJ korisničkoj
+   poruci, ne na isječke iz ranijih razmjena.`;
 
 /** Glavni async generator — emituje QnaStreamEvent-ove. */
 export async function* answerStream(
@@ -54,10 +70,12 @@ export async function* answerStream(
 ): AsyncGenerator<QnaStreamEvent, void, void> {
   const start = Date.now();
 
-  // 1. Pretraga konteksta. Default DEFAULT_KONTEKST_K hit-ova; trenutno
-  //    fiksno — kasnije se može izložiti u QnaRequest-u kad UI to zatraži.
+  // 1. Pretraga konteksta. Za kratka follow-up pitanja (npr. "samo u
+  //    zakonu o medijima") dodajemo zadnje korisnikovo pitanje u upit
+  //    da embedding signal ne propadne. Inače trenutno pitanje samo.
+  const upitZaPretragu = sastaviUpitZaPretragu(req.pitanje, req.istorija);
   const { pogoci } = await search({
-    upit: req.pitanje,
+    upit: upitZaPretragu,
     filteri: req.filteri,
     topK: DEFAULT_KONTEKST_K,
   });
@@ -77,7 +95,10 @@ export async function* answerStream(
   // 3. Konstruiši user prompt sa numerisanim isječcima.
   const userPrompt = formatUserPrompt(req.pitanje, pogoci);
 
-  // 4. Stream odgovor sa Claude API-ja.
+  // 4. Stream odgovor sa Claude API-ja, sa istorijom prethodnih razmjena.
+  //    Prethodne assistant poruke ne sadrže isječke iz njihovog turna —
+  //    samo tekst odgovora. Citati [1]..[N] u trenutnom turnu odnose se
+  //    SAMO na isječke u aktuelnom user prompt-u.
   try {
     const claude = getClaude();
     const stream = claude.messages.stream({
@@ -90,7 +111,10 @@ export async function* answerStream(
           cache_control: { type: "ephemeral" },
         },
       ],
-      messages: [{ role: "user", content: userPrompt }],
+      messages: [
+        ...formatirajIstoriju(req.istorija),
+        { role: "user", content: userPrompt },
+      ],
     });
 
     for await (const event of stream) {
@@ -143,6 +167,44 @@ function formatUserPrompt(pitanje: string, hits: SearchHit[]): string {
     .join("\n\n---\n\n");
 
   return `PITANJE: ${pitanje}\n\nISJEČCI:\n${isjecciBlok}`;
+}
+
+/**
+ * Mapira QnaPoruka[] u Anthropic messages format. Uzima samo zadnjih
+ * MAX_ISTORIJA poruka i obezbjeđuje da niz počinje sa "user" (Claude
+ * API zahtjev) — ako ispadne assistant prvo, sjeku se i te.
+ */
+function formatirajIstoriju(
+  istorija: QnaPoruka[] | undefined,
+): Array<{ role: "user" | "assistant"; content: string }> {
+  if (!istorija || istorija.length === 0) return [];
+  let posljednje = istorija.slice(-MAX_ISTORIJA);
+  // Prvi mora biti user (Anthropic ograničenje).
+  while (posljednje.length > 0 && posljednje[0]!.uloga !== "user") {
+    posljednje = posljednje.slice(1);
+  }
+  return posljednje.map((p) => ({
+    role: p.uloga === "user" ? "user" : "assistant",
+    content: p.tekst,
+  }));
+}
+
+/**
+ * Sastavlja upit za RAG search. Za kratka follow-up pitanja (ispod
+ * FOLLOWUP_PRAG karaktera) dodaje zadnje user pitanje iz istorije — bez
+ * toga embedding "samo u zakonu o medijima" ne nosi semantički signal o
+ * tome šta se pita.
+ */
+function sastaviUpitZaPretragu(
+  pitanje: string,
+  istorija: QnaPoruka[] | undefined,
+): string {
+  if (pitanje.length >= FOLLOWUP_PRAG || !istorija) return pitanje;
+  const zadnjeUserPitanje = [...istorija]
+    .reverse()
+    .find((p) => p.uloga === "user");
+  if (!zadnjeUserPitanje) return pitanje;
+  return `${zadnjeUserPitanje.tekst} ${pitanje}`;
 }
 
 export { MAX_KONTEKST_K };

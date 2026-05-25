@@ -40,7 +40,13 @@ interface SearchRow {
   document_id: string;
   sadrzaj: string;
   struktura_putanja: string | null;
-  rrf_score: string; // numeric vraća se kao string iz pg-a
+  /**
+   * Skor relevantnosti u [0, 1] — prikazuje se korisniku kao procenat.
+   * Izvor: cosine sličnost embeddinga (1 - cosine_distance). Za chunkove
+   * bez embeddinga (rijetki edge case) koristimo trigram similarity.
+   * RRF se koristi samo za sortiranje (vidi rrf_score interno u SQL-u).
+   */
+  skor: string;
   naslov: string;
   tip: string;
   oblast: string;
@@ -90,7 +96,12 @@ SELECT f.chunk_id,
        c.document_id,
        c.sadrzaj,
        c.struktura_putanja,
-       f.rrf_score::text,
+       -- Skor za UI: cosine sličnost u [0,1] iz BGE-M3 embeddinga.
+       -- Za chunkove bez embeddinga pada na trigram similarity.
+       GREATEST(0.0, LEAST(1.0, COALESCE(
+         (1.0 - (c.embedding <=> $1::vector))::float,
+         similarity(c.sadrzaj, $7)::float
+       )))::text AS skor,
        d.naslov,
        d.tip,
        d.oblast,
@@ -152,7 +163,7 @@ function rowToHit(r: SearchRow): SearchHit {
     // Isječak — pun chunk sadržaj. UI može da skraćuje ili highlightuje
     // ključne riječi; sirovi tekst se vraća da bi se očuvao kontekst.
     isjecak: r.sadrzaj,
-    skor: parseFloat(r.rrf_score),
+    skor: parseFloat(r.skor),
     referenca: r.struktura_putanja,
     metapodaci: {
       tip: r.tip as DocumentMeta["tip"],
