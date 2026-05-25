@@ -8,6 +8,7 @@ import { pingEmbeddings } from "./services/embeddings.js";
 import { pingOcr } from "./services/ocr.js";
 import { recoverStaleIngests } from "./services/ingest_worker.js";
 import { documentsRouter } from "./routes/documents.js";
+import { searchRouter } from "./routes/search.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const app = express();
@@ -16,6 +17,7 @@ app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
 app.use("/api/documents", documentsRouter);
+app.use("/api/search", searchRouter);
 
 app.get("/api/health", async (_req, res) => {
   const [pg, vec, emb, ocr] = await Promise.all([
