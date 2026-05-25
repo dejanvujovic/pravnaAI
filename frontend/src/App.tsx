@@ -9,6 +9,7 @@ export function App() {
       <Routes>
         <Route element={<AppLayout />}>
           <Route index element={<Chat />} />
+          <Route path="razgovor/:id" element={<Chat />} />
           <Route path="dokumenti" element={<Ingest />} />
         </Route>
       </Routes>

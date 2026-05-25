@@ -41,6 +41,8 @@ const OBLAST = [
 
 const STATUS = ["NACRT", "VAZECI", "STAVLJEN_VAN_SNAGE", "ARHIVA"] as const;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const qnaSchema = z.object({
   pitanje: z.string().trim().min(3).max(2000),
   istorija: z
@@ -52,6 +54,8 @@ const qnaSchema = z.object({
     )
     .max(50)
     .optional(),
+  razgovorId: z.string().regex(UUID_RE).optional(),
+  sesijaId: z.string().regex(UUID_RE).optional(),
   filteri: z
     .object({
       tip: z.array(z.enum(TIP)).min(1).optional(),

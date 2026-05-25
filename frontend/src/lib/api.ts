@@ -17,6 +17,8 @@ import type {
   IngestStatus,
   QnaRequest,
   QnaStreamEvent,
+  RazgovorDetail,
+  RazgovorListItem,
 } from "@rtcg/shared";
 
 const API_BASE = ""; // Vite proxy preusmjerava /api/* na backend.
@@ -207,6 +209,42 @@ export async function getChunk(id: string, signal?: AbortSignal): Promise<ChunkD
   const r = await fetch(`${API_BASE}/api/chunks/${id}`, { signal });
   if (!r.ok) throw await obradiGreskuOdgovora(r);
   return (await r.json()) as ChunkDetail;
+}
+
+// ---------------------------------------------------------------------------
+// Razgovori (sidebar istorija)
+// ---------------------------------------------------------------------------
+
+/** GET /api/conversations?sesijaId=UUID — lista razgovora za sidebar. */
+export async function listRazgovora(
+  sesijaId: string,
+  signal?: AbortSignal,
+): Promise<RazgovorListItem[]> {
+  const r = await fetch(
+    `${API_BASE}/api/conversations?sesijaId=${encodeURIComponent(sesijaId)}`,
+    { signal },
+  );
+  if (!r.ok) throw await obradiGreskuOdgovora(r);
+  const data = (await r.json()) as { razgovori: RazgovorListItem[] };
+  return data.razgovori;
+}
+
+/** GET /api/conversations/:id — pun razgovor sa porukama. */
+export async function getRazgovor(
+  id: string,
+  signal?: AbortSignal,
+): Promise<RazgovorDetail> {
+  const r = await fetch(`${API_BASE}/api/conversations/${id}`, { signal });
+  if (!r.ok) throw await obradiGreskuOdgovora(r);
+  return (await r.json()) as RazgovorDetail;
+}
+
+/** DELETE /api/conversations/:id — soft delete. */
+export async function deleteRazgovor(id: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/api/conversations/${id}`, {
+    method: "DELETE",
+  });
+  if (!r.ok) throw await obradiGreskuOdgovora(r);
 }
 
 /**
