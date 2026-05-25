@@ -11,6 +11,7 @@ import type {
   DocumentListQuery,
   DocumentListResponse,
   DocumentMeta,
+  DocumentPatchRequest,
   HealthResponse,
   IngestStatus,
   QnaRequest,
@@ -184,6 +185,20 @@ export async function listDokumenata(
 export async function deleteDokument(id: string): Promise<void> {
   const r = await fetch(`${API_BASE}/api/documents/${id}`, { method: "DELETE" });
   if (!r.ok) throw await obradiGreskuOdgovora(r);
+}
+
+/** PATCH /api/documents/:id — izmjena metapodataka. */
+export async function patchDokument(
+  id: string,
+  izmjene: DocumentPatchRequest,
+): Promise<DocumentMeta> {
+  const r = await fetch(`${API_BASE}/api/documents/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(izmjene),
+  });
+  if (!r.ok) throw await obradiGreskuOdgovora(r);
+  return (await r.json()) as DocumentMeta;
 }
 
 /**

@@ -582,6 +582,148 @@ documentsRouter.get(
 );
 
 // ---------------------------------------------------------------------------
+// PATCH /api/documents/:id — izmjena metapodataka postojećeg dokumenta
+// Ne dira fajl, hash, parsiran tekst, niti chunkove. Samo metapodaci forme.
+// Nullable polja (datum, organSud, brojSluzbenogLista) mogu biti null da
+// se obrišu, ili izostavljena da se sačuvaju trenutne vrijednosti.
+// ---------------------------------------------------------------------------
+
+const patchSchema = z
+  .object({
+    naslov: z.string().min(1).max(500),
+    tip: z.enum([
+      "ZAKON",
+      "PODZAKONSKI_AKT",
+      "INTERNI_AKT",
+      "UGOVOR_O_RADU",
+      "UGOVOR_JAVNA_NABAVKA",
+      "PRESUDA",
+      "SUDSKA_PRAKSA",
+      "MISLJENJE",
+      "OSTALO",
+    ]),
+    oblast: z.enum([
+      "RADNO_PRAVO",
+      "JAVNE_NABAVKE",
+      "PARNICNI_POSTUPAK",
+      "UPRAVNI_POSTUPAK",
+      "MEDIJSKO_PRAVO",
+      "OBLIGACIONO",
+      "AUTORSKO",
+      "KRIVICNO",
+      "OSTALO",
+    ]),
+    status: z.enum(["NACRT", "VAZECI", "STAVLJEN_VAN_SNAGE", "ARHIVA"]),
+    datum: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Datum mora biti u formatu YYYY-MM-DD")
+      .nullable(),
+    organSud: z.string().max(255).nullable(),
+    brojSluzbenogLista: z.string().max(100).nullable(),
+    jezik: z.enum(["sr-Cyrl", "sr-Latn", "mixed"]),
+  })
+  .partial();
+
+documentsRouter.patch(
+  "/:id",
+  async (req: Request, res: Response): Promise<void> => {
+    const id = req.params.id;
+    if (!id || !UUID_RE.test(id)) {
+      res.status(400).json({ greska: "Neispravan ID dokumenta." });
+      return;
+    }
+
+    const parsed = patchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        greska: "Neispravni metapodaci u tijelu zahtjeva.",
+        detalji: parsed.error.flatten(),
+      });
+      return;
+    }
+    const izmjene = parsed.data;
+    if (Object.keys(izmjene).length === 0) {
+      res.status(400).json({ greska: "Nema polja za izmjenu." });
+      return;
+    }
+
+    // Mapiranje camelCase ključeva forme na snake_case kolone u DB-u.
+    const KOLONE: Record<keyof typeof izmjene, string> = {
+      naslov: "naslov",
+      tip: "tip",
+      oblast: "oblast",
+      status: "status",
+      datum: "datum",
+      organSud: "organ_sud",
+      brojSluzbenogLista: "broj_sluzbenog_lista",
+      jezik: "jezik",
+    };
+
+    const setKlauzule: string[] = ["azurirano = NOW()"];
+    const params: unknown[] = [];
+    const push = (val: unknown): string => {
+      params.push(val);
+      return `$${params.length}`;
+    };
+    for (const [k, v] of Object.entries(izmjene)) {
+      const kolona = KOLONE[k as keyof typeof izmjene];
+      // Prazne stringove za nullable polja tretiramo kao NULL.
+      let vrijednost: unknown = v;
+      if (
+        (k === "datum" || k === "organSud" || k === "brojSluzbenogLista") &&
+        typeof v === "string" &&
+        v.trim() === ""
+      ) {
+        vrijednost = null;
+      }
+      setKlauzule.push(`${kolona} = ${push(vrijednost)}`);
+    }
+
+    const idPh = push(id);
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const r = await client.query<DocumentRow>(
+        `UPDATE documents.documents
+            SET ${setKlauzule.join(", ")}
+          WHERE id = ${idPh}::uuid AND obrisano IS NULL
+        RETURNING id, naslov, tip, oblast, status, datum, organ_sud,
+                  broj_sluzbenog_lista, jezik, broj_strana, velicina_bajtova,
+                  kreirano, azurirano,
+                  (SELECT COUNT(*)::int FROM rag.chunks
+                    WHERE document_id = ${idPh}::uuid) AS broj_segmenata`,
+        params,
+      );
+
+      if (r.rowCount === 0) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ greska: "Dokument nije pronađen ili je obrisan." });
+        return;
+      }
+
+      await logIngest(
+        {
+          documentId: id,
+          akcija: "EDIT",
+          detalji: { polja: Object.keys(izmjene) },
+        },
+        client,
+      );
+
+      await client.query("COMMIT");
+      res.json(rowToMeta(r.rows[0]!));
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
 // DELETE /api/documents/:id — soft delete (postavlja obrisano = NOW())
 // ---------------------------------------------------------------------------
 

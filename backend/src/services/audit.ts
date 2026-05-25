@@ -19,7 +19,8 @@ export type IngestAkcija =
   | "CHUNK"
   | "EMBED"
   | "FAILED"
-  | "DELETE";
+  | "DELETE"
+  | "EDIT";
 
 export type IngestStatus = "OK" | "GRESKA" | "PRESKOCENO";
 

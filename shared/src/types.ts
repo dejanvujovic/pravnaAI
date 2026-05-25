@@ -184,6 +184,22 @@ export interface IngestPatchRequest {
   oblast?: LegalArea;
 }
 
+/**
+ * Izmjena metapodataka već uploadovanog dokumenta — PATCH /api/documents/:id.
+ * Sva polja opciona; nullable polja (datum, organSud, brojSluzbenogLista)
+ * mogu biti eksplicitno postavljena na null da se obrišu.
+ */
+export interface DocumentPatchRequest {
+  naslov?: string;
+  tip?: DocumentType;
+  oblast?: LegalArea;
+  status?: DocumentStatus;
+  datum?: string | null;
+  organSud?: string | null;
+  brojSluzbenogLista?: string | null;
+  jezik?: "sr-Cyrl" | "sr-Latn" | "mixed";
+}
+
 // ---------------------------------------------------------------------------
 // Analiza dokumenta (auto-popunjavanje forme prije upload-a)
 // ---------------------------------------------------------------------------
