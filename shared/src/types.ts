@@ -136,8 +136,19 @@ export interface QnaRequest {
    * Istorija razgovora prije trenutnog pitanja, hronološki (najstarija prva).
    * NE uključuje trenutno pitanje — ono ide u `pitanje`. Backend uzima samo
    * zadnjih N (vidi MAX_ISTORIJA u services/qna.ts) da ograniči cost.
+   * Ignoriše se ako je `razgovorId` postavljen — istorija se učitava iz DB-a.
    */
   istorija?: QnaPoruka[];
+  /**
+   * ID postojećeg razgovora. Ako je odsutan, backend lijeno kreira novi
+   * razgovor i šalje njegov id kroz "razgovor" SSE event.
+   */
+  razgovorId?: string;
+  /**
+   * Sesija (browser UUID iz localStorage). Obavezan ako razgovorId nije
+   * dat — koristi se kao vlasništvo novokreiranog razgovora.
+   */
+  sesijaId?: string;
   filteri?: SearchRequest["filteri"];
 }
 
@@ -151,10 +162,46 @@ export interface QnaResponse {
 
 /** SSE event tokom streaminga Q&A odgovora. */
 export type QnaStreamEvent =
+  /**
+   * Šalje se kao prvi event ako je razgovor lijeno kreiran (POST /api/qna
+   * bez razgovorId). Frontend ga koristi da postavi razgovorId i osveži
+   * sidebar listu.
+   */
+  | { tip: "razgovor"; id: string; naslov: string }
   | { tip: "token"; tekst: string }
   | { tip: "citati"; citati: Citat[] }
   | { tip: "kraj"; model: string; trajanjeMs: number }
   | { tip: "greska"; poruka: string };
+
+// ---------------------------------------------------------------------------
+// Razgovori (chat history sidebar)
+// ---------------------------------------------------------------------------
+
+/** Stavka u listi razgovora za sidebar. */
+export interface RazgovorListItem {
+  id: string;
+  naslov: string;
+  kreirano: string; // ISO timestamp
+  azurirano: string; // ISO timestamp — sortiramo po ovome
+}
+
+/** Jedna sačuvana poruka, učitana iz baze (sa citatima za AI poruke). */
+export interface SacuvanaPoruka {
+  id: string;
+  uloga: "user" | "ai";
+  tekst: string;
+  citati: Citat[] | null;
+  kreirano: string;
+}
+
+/** Pun razgovor sa svim porukama — GET /api/conversations/:id. */
+export interface RazgovorDetail {
+  id: string;
+  naslov: string;
+  kreirano: string;
+  azurirano: string;
+  poruke: SacuvanaPoruka[];
+}
 
 // ---------------------------------------------------------------------------
 // Unos dokumenata (ingest)

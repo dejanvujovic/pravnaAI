@@ -27,6 +27,10 @@ import type {
 } from "@rtcg/shared";
 import { CLAUDE_MODEL, getClaude } from "./claude.js";
 import { search } from "./search.js";
+import { pool } from "../db.js";
+
+/** Maks. dužina automatski generisanog naslova razgovora. */
+const NASLOV_MAX_DUZINA = 80;
 
 const DEFAULT_KONTEKST_K = 8;
 const MAX_KONTEKST_K = 15;
@@ -70,10 +74,52 @@ export async function* answerStream(
 ): AsyncGenerator<QnaStreamEvent, void, void> {
   const start = Date.now();
 
-  // 1. Pretraga konteksta. Za kratka follow-up pitanja (npr. "samo u
+  // 0. Razgovor lifecycle: ako razgovorId postoji, učitaj istoriju iz DB-a
+  //    (autoritativna nad client-poslatom). Inače, ako sesijaId postoji,
+  //    lijeno kreiraj novi razgovor sa naslovom iz prvih ~50 karaktera
+  //    pitanja, i objavi ga klijentu kroz "razgovor" event.
+  let razgovorId: string | null = req.razgovorId ?? null;
+  let istorijaDB: QnaPoruka[] = [];
+
+  if (razgovorId) {
+    const r = await pool.query<{ id: string }>(
+      `SELECT id FROM chat.razgovori
+        WHERE id = $1::uuid AND obrisano IS NULL`,
+      [razgovorId],
+    );
+    if (r.rowCount === 0) {
+      yield {
+        tip: "greska",
+        poruka: "Razgovor nije pronađen ili je obrisan.",
+      };
+      return;
+    }
+    istorijaDB = await ucitajIstoriju(razgovorId);
+  } else if (req.sesijaId) {
+    const naslov = generisiNaslov(req.pitanje);
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO chat.razgovori (sesija_id, naslov)
+       VALUES ($1::uuid, $2)
+       RETURNING id`,
+      [req.sesijaId, naslov],
+    );
+    razgovorId = r.rows[0]!.id;
+    yield { tip: "razgovor", id: razgovorId, naslov };
+  }
+
+  // Istorija za prompt — iz DB-a ako imamo razgovor, inače iz request-a.
+  const istorija: QnaPoruka[] =
+    istorijaDB.length > 0 ? istorijaDB : req.istorija ?? [];
+
+  // 1. Persist user pitanje (ako imamo razgovor).
+  if (razgovorId) {
+    await sacuvajPoruku(razgovorId, "user", req.pitanje, null);
+  }
+
+  // 2. Pretraga konteksta. Za kratka follow-up pitanja (npr. "samo u
   //    zakonu o medijima") dodajemo zadnje korisnikovo pitanje u upit
   //    da embedding signal ne propadne. Inače trenutno pitanje samo.
-  const upitZaPretragu = sastaviUpitZaPretragu(req.pitanje, req.istorija);
+  const upitZaPretragu = sastaviUpitZaPretragu(req.pitanje, istorija);
   const { pogoci } = await search({
     upit: upitZaPretragu,
     filteri: req.filteri,
@@ -88,17 +134,18 @@ export async function* answerStream(
     return;
   }
 
-  // 2. Emituj `citati` event odmah — UI ih prikazuje dok Claude još razmišlja.
+  // 3. Emituj `citati` event odmah — UI ih prikazuje dok Claude još razmišlja.
   const citati = pogoci.map(hitToCitat);
   yield { tip: "citati", citati };
 
-  // 3. Konstruiši user prompt sa numerisanim isječcima.
+  // 4. Konstruiši user prompt sa numerisanim isječcima.
   const userPrompt = formatUserPrompt(req.pitanje, pogoci);
 
-  // 4. Stream odgovor sa Claude API-ja, sa istorijom prethodnih razmjena.
+  // 5. Stream odgovor sa Claude API-ja, sa istorijom prethodnih razmjena.
   //    Prethodne assistant poruke ne sadrže isječke iz njihovog turna —
   //    samo tekst odgovora. Citati [1]..[N] u trenutnom turnu odnose se
   //    SAMO na isječke u aktuelnom user prompt-u.
+  let pun_odgovor = "";
   try {
     const claude = getClaude();
     const stream = claude.messages.stream({
@@ -112,7 +159,7 @@ export async function* answerStream(
         },
       ],
       messages: [
-        ...formatirajIstoriju(req.istorija),
+        ...formatirajIstoriju(istorija),
         { role: "user", content: userPrompt },
       ],
     });
@@ -122,8 +169,15 @@ export async function* answerStream(
         event.type === "content_block_delta" &&
         event.delta.type === "text_delta"
       ) {
+        pun_odgovor += event.delta.text;
         yield { tip: "token", tekst: event.delta.text };
       }
+    }
+
+    // 6. Persist AI poruku + citati (samo ako je odgovor netrivijalan).
+    if (razgovorId && pun_odgovor.length > 0) {
+      await sacuvajPoruku(razgovorId, "ai", pun_odgovor, citati);
+      await dotakniRazgovor(razgovorId);
     }
 
     yield {
@@ -205,6 +259,60 @@ function sastaviUpitZaPretragu(
     .find((p) => p.uloga === "user");
   if (!zadnjeUserPitanje) return pitanje;
   return `${zadnjeUserPitanje.tekst} ${pitanje}`;
+}
+
+// ---------------------------------------------------------------------------
+// Perzistencija razgovora
+// ---------------------------------------------------------------------------
+
+/**
+ * Naslov razgovora iz prvog pitanja: trim, sjeci na NASLOV_MAX_DUZINA,
+ * dodaj "…" ako je sjećeno.
+ */
+function generisiNaslov(pitanje: string): string {
+  const trimmed = pitanje.trim().replace(/\s+/g, " ");
+  if (trimmed.length <= NASLOV_MAX_DUZINA) return trimmed;
+  return trimmed.slice(0, NASLOV_MAX_DUZINA - 1).trimEnd() + "…";
+}
+
+async function ucitajIstoriju(razgovorId: string): Promise<QnaPoruka[]> {
+  const r = await pool.query<{ uloga: string; tekst: string }>(
+    `SELECT uloga, tekst
+       FROM chat.poruke
+      WHERE razgovor_id = $1::uuid
+      ORDER BY redni_broj ASC`,
+    [razgovorId],
+  );
+  return r.rows.map((row) => ({
+    uloga: row.uloga as "user" | "ai",
+    tekst: row.tekst,
+  }));
+}
+
+async function sacuvajPoruku(
+  razgovorId: string,
+  uloga: "user" | "ai",
+  tekst: string,
+  citati: Citat[] | null,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO chat.poruke (razgovor_id, redni_broj, uloga, tekst, citati)
+     VALUES (
+       $1::uuid,
+       COALESCE((SELECT MAX(redni_broj) + 1 FROM chat.poruke WHERE razgovor_id = $1::uuid), 0),
+       $2,
+       $3,
+       $4::jsonb
+     )`,
+    [razgovorId, uloga, tekst, citati ? JSON.stringify(citati) : null],
+  );
+}
+
+async function dotakniRazgovor(razgovorId: string): Promise<void> {
+  await pool.query(
+    `UPDATE chat.razgovori SET azurirano = NOW() WHERE id = $1::uuid`,
+    [razgovorId],
+  );
 }
 
 export { MAX_KONTEKST_K };
