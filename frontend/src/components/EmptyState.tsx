@@ -1,20 +1,47 @@
-import { ChevronRight, Quote, Scale } from "lucide-react";
+import { Briefcase, Gavel, Radio, Scale, ShoppingBag, type LucideIcon } from "lucide-react";
 
 interface Props {
   onPredlog: (pitanje: string) => void;
 }
 
-const PREDLOZI = [
-  "Koji su rokovi za odgovor na tužbu prema ZPP-u?",
-  "Koje su obaveze poslodavca pri otkazu ugovora o radu?",
-  "Šta je obaveza naručioca u postupku javne nabavke?",
-  "Da li RTCG kao javni servis ima specifične obaveze po Zakonu o medijima?",
-];
+interface BrzaAkcija {
+  ikona: LucideIcon;
+  kategorija: string;
+  pitanje: string;
+  cssBoja: string;
+}
 
 /**
- * Početni ekran prije prvog pitanja — brend, naslov, lista primjera.
- * UI-SPEC §3.2 — pojednostavljeno za prvi PR (bez 2x2 quick action grid-a).
+ * 2×2 grid kategorija sa primjernim pitanjem. Klik šalje pitanje.
+ * UI-SPEC §3.2 — kategorije pokrivaju 4 glavne oblasti za pravnu službu RTCG.
  */
+const BRZE_AKCIJE: BrzaAkcija[] = [
+  {
+    ikona: Gavel,
+    kategorija: "Parnični postupak",
+    pitanje: "Koji su rokovi za odgovor na tužbu prema ZPP-u?",
+    cssBoja: "var(--praksa)",
+  },
+  {
+    ikona: Briefcase,
+    kategorija: "Radno pravo",
+    pitanje: "Koje su obaveze poslodavca pri otkazu ugovora o radu?",
+    cssBoja: "var(--ugovor)",
+  },
+  {
+    ikona: ShoppingBag,
+    kategorija: "Javne nabavke",
+    pitanje: "Šta je obaveza naručioca u postupku javne nabavke?",
+    cssBoja: "var(--interni)",
+  },
+  {
+    ikona: Radio,
+    kategorija: "Medijsko pravo",
+    pitanje: "Koje specifične obaveze ima RTCG kao javni servis po Zakonu o medijima?",
+    cssBoja: "var(--propis)",
+  },
+];
+
 export function EmptyState({ onPredlog }: Props) {
   return (
     <div
@@ -67,49 +94,97 @@ export function EmptyState({ onPredlog }: Props) {
           letterSpacing: ".12em",
           fontWeight: 600,
           marginBottom: 12,
+          textTransform: "uppercase",
         }}
       >
-        PRIMJERI PITANJA
+        Brze teme
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {PREDLOZI.map((p, i) => (
-          <button
-            key={i}
-            onClick={() => onPredlog(p)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              textAlign: "left",
-              background: "transparent",
-              border: "1px solid var(--border)",
-              borderRadius: 11,
-              padding: "12px 14px",
-              color: "var(--text)",
-              fontSize: 14,
-              fontFamily: "var(--font-sans)",
-              transition: "background var(--t-fast), border-color var(--t-fast)",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "var(--panel)";
-              e.currentTarget.style.borderColor =
-                "color-mix(in srgb, var(--accent) 30%, var(--border))";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.borderColor = "var(--border)";
-            }}
-          >
-            <Quote
-              size={14}
-              color="var(--accent)"
-              style={{ flexShrink: 0, opacity: 0.7 }}
-            />
-            <span style={{ flex: 1 }}>{p}</span>
-            <ChevronRight size={16} color="var(--muted)" />
-          </button>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+          gap: 10,
+        }}
+      >
+        {BRZE_AKCIJE.map((a) => (
+          <Kartica key={a.kategorija} akcija={a} onClick={() => onPredlog(a.pitanje)} />
         ))}
       </div>
     </div>
+  );
+}
+
+interface KarticaProps {
+  akcija: BrzaAkcija;
+  onClick: () => void;
+}
+
+function Kartica({ akcija, onClick }: KarticaProps) {
+  const Icon = akcija.ikona;
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        textAlign: "left",
+        background: "var(--panel)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--r-card)",
+        padding: "16px 16px 14px",
+        color: "var(--text)",
+        fontFamily: "var(--font-sans)",
+        cursor: "pointer",
+        transition: "border-color var(--t-fast), background var(--t-fast), transform var(--t-fast)",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = `color-mix(in srgb, ${akcija.cssBoja} 55%, var(--border))`;
+        e.currentTarget.style.background = `color-mix(in srgb, ${akcija.cssBoja} 5%, var(--panel))`;
+        e.currentTarget.style.transform = "translateY(-1px)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = "var(--border)";
+        e.currentTarget.style.background = "var(--panel)";
+        e.currentTarget.style.transform = "translateY(0)";
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: 9,
+            display: "grid",
+            placeItems: "center",
+            background: `color-mix(in srgb, ${akcija.cssBoja} 14%, transparent)`,
+            border: `1px solid color-mix(in srgb, ${akcija.cssBoja} 35%, transparent)`,
+            flexShrink: 0,
+          }}
+        >
+          <Icon size={15} color={akcija.cssBoja} strokeWidth={2.1} />
+        </span>
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            color: akcija.cssBoja,
+            letterSpacing: ".01em",
+          }}
+        >
+          {akcija.kategorija}
+        </span>
+      </div>
+      <span
+        style={{
+          fontSize: 13.5,
+          lineHeight: 1.4,
+          color: "var(--text)",
+          fontFamily: "var(--font-serif)",
+        }}
+      >
+        {akcija.pitanje}
+      </span>
+    </button>
   );
 }
