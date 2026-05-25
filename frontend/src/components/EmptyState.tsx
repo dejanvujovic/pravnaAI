@@ -39,10 +39,10 @@ export function EmptyState({ onPredlog }: Props) {
       <h1
         style={{
           textAlign: "center",
-          fontSize: 30,
-          fontWeight: 600,
+          fontSize: 32,
+          fontWeight: 500,
           margin: "0 0 10px",
-          letterSpacing: "-.01em",
+          letterSpacing: "-.015em",
         }}
       >
         Kako mogu pomoći pravnoj službi?
@@ -87,7 +87,7 @@ export function EmptyState({ onPredlog }: Props) {
               padding: "12px 14px",
               color: "var(--text)",
               fontSize: 14,
-              fontFamily: "var(--font-serif)",
+              fontFamily: "var(--font-sans)",
               transition: "background var(--t-fast), border-color var(--t-fast)",
             }}
             onMouseEnter={(e) => {
