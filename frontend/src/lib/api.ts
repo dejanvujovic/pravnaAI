@@ -7,6 +7,7 @@
  */
 
 import type {
+  AnalyzeResponse,
   DocumentListQuery,
   DocumentListResponse,
   DocumentMeta,
@@ -183,4 +184,24 @@ export async function listDokumenata(
 export async function deleteDokument(id: string): Promise<void> {
   const r = await fetch(`${API_BASE}/api/documents/${id}`, { method: "DELETE" });
   if (!r.ok) throw await obradiGreskuOdgovora(r);
+}
+
+/**
+ * POST /api/documents/analyze — heuristički predlog metapodataka iz fajla.
+ * Ne snima fajl, samo parsira tekst i pokuša prepoznati naslov, tip, datum,
+ * itd. Frontend prefiluje formu sa vraćenim poljima.
+ */
+export async function analyzeDokument(
+  fajl: File,
+  signal?: AbortSignal,
+): Promise<AnalyzeResponse> {
+  const fd = new FormData();
+  fd.append("file", fajl);
+  const r = await fetch(`${API_BASE}/api/documents/analyze`, {
+    method: "POST",
+    body: fd,
+    signal,
+  });
+  if (!r.ok) throw await obradiGreskuOdgovora(r);
+  return (await r.json()) as AnalyzeResponse;
 }

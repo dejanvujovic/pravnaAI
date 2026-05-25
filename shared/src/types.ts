@@ -185,6 +185,28 @@ export interface IngestPatchRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Analiza dokumenta (auto-popunjavanje forme prije upload-a)
+// ---------------------------------------------------------------------------
+
+/**
+ * Predlog metapodataka izvučen heuristički iz parsiranog teksta dokumenta.
+ * Sva polja su opciona — popunjena su samo ona za koja je heuristika imala
+ * dovoljnu pouzdanost. Frontend prefiluje formu samo neispunjena polja.
+ */
+export interface AnalyzeResponse {
+  naslov?: string;
+  tip?: DocumentType;
+  oblast?: LegalArea;
+  status?: DocumentStatus;
+  datum?: string; // YYYY-MM-DD
+  organSud?: string;
+  brojSluzbenogLista?: string;
+  jezik?: "sr-Cyrl" | "sr-Latn" | "mixed";
+  /** Pouzdanost svakog detektovanog polja (0..1) — za eventualno označavanje u UI. */
+  pouzdanost?: Partial<Record<keyof Omit<AnalyzeResponse, "pouzdanost">, number>>;
+}
+
+// ---------------------------------------------------------------------------
 // Listing dokumenata (Ingest ekran)
 // ---------------------------------------------------------------------------
 
