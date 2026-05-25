@@ -6,6 +6,7 @@ import { config } from "./config.js";
 import { pingPgvector, pingPostgres, pool } from "./db.js";
 import { pingEmbeddings } from "./services/embeddings.js";
 import { pingOcr } from "./services/ocr.js";
+import { recoverStaleIngests } from "./services/ingest_worker.js";
 import { documentsRouter } from "./routes/documents.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
@@ -43,6 +44,14 @@ app.use(errorHandler);
 const server = app.listen(config.port, () => {
   console.log(`[backend] sluša na http://localhost:${config.port}`);
   console.log(`[backend] režim: ${config.nodeEnv}`);
+
+  // Pokupi dokumente koji su ostali zaglavljeni u CHUNKING/EMBEDDING
+  // nakon prethodnog crash-a ili restartovanja.
+  recoverStaleIngests()
+    .then((n) => {
+      if (n > 0) console.log(`[worker] startup recovery: ${n} dokumenata u redu`);
+    })
+    .catch((e) => console.error("[worker] startup recovery greška:", e));
 });
 
 async function shutdown(signal: string) {
