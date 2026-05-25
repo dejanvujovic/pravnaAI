@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.1",
+    "@anthropic-ai/sdk": "^0.98.0",
     "@rtcg/shared": "*",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
