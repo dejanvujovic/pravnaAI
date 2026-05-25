@@ -1,0 +1,45 @@
+/*
+ * RTCG Legal AI — dizajn tokeni (UI-SPEC §1.1).
+ * Dark profesionalna paleta sa RTCG zlatnom kao jedinim akcentom.
+ * Sve boje i radijusi se referenciraju kroz CSS varijable; nikad hardkoduj.
+ */
+:root {
+  /* Pozadine */
+  --bg: #0e1116;
+  --panel: #161b22;
+  --panel-2: #1c232d;
+  --border: #262e3a;
+
+  /* Tekst */
+  --text: #e6eaf0;
+  --muted: #8a94a6;
+
+  /* Akcent — RTCG zlatna */
+  --accent: #c8a24b;
+  --accent-2: #8c6f2e;
+  --accent-grad: linear-gradient(135deg, var(--accent), var(--accent-2));
+
+  /* Semantičke boje za tipove dokumenata (po DocumentGroup) */
+  --propis: var(--accent);     /* ZAKON, PODZAKONSKI_AKT */
+  --praksa: #7fb3ff;           /* PRESUDA, SUDSKA_PRAKSA, MISLJENJE */
+  --ugovor: #5fbf8a;           /* UGOVOR_O_RADU, UGOVOR_JAVNA_NABAVKA */
+  --interni: #c792e0;          /* INTERNI_AKT, OSTALO */
+
+  /* Stanja */
+  --ok: #5fbf8a;
+  --error: #e07a6b;
+
+  /* Radijusi */
+  --r-card: 14px;
+  --r-button: 10px;
+  --r-pill: 20px;
+  --r-icon: 9px;
+
+  /* Tipografija */
+  --font-serif: "Newsreader", Georgia, "Times New Roman", serif;
+  --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* Tranzicije */
+  --t-fast: 0.12s ease;
+  --t-mid: 0.2s ease;
+}
