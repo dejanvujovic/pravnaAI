@@ -38,19 +38,37 @@ Cijeli stack se hostuje interno — podaci ne napuštaju RTCG infrastrukturu osi
 | **2 — Produkcija** | avg/sep 2026 | LDAP/AD autentifikacija, role-based access, audit, monitoring, hardening |
 | **3 — Contract Intelligence** | okt/nov 2026 | Analiza rizika ugovora prema sudskoj praksi, Word eksport sa *tracked changes* |
 
-**Status (maj 2026):**
+**Status (maj 2026) — Faza 1 funkcionalno gotova, polishing u toku:**
+
+Infrastruktura:
 - ✅ Monorepo skelet, Docker Compose stack, CI workflow
 - ✅ Postgres 16 + pgvector 0.8.2 + HNSW indeks
 - ✅ BGE-M3 embedding sidecar (1024-dim, multilingvalan, CPU)
-- ✅ SQL migration sistem (hash-tracked)
-- ✅ `POST /api/documents` — multipart upload + SHA-256 dedup
-- ✅ Ekstrakcija teksta iz digitalnih PDF (`unpdf`) i DOCX (`mammoth`)
-- ✅ Frontend UI specifikacija ([frontend/UI-SPEC.md](frontend/UI-SPEC.md)) i preview prototip ([frontend/PravnaAI_Preview.jsx](frontend/PravnaAI_Preview.jsx))
-- ✅ Tipovi za chat (Q&A + SSE), ingest pipeline, citate (`shared/src/types.ts`)
-- ⏳ OCR fallback za skenirane PDF-ove (Tesseract) — PR #4
-- ⏳ Chunking + embedding poziv + upis u `rag.chunks` — PR #5
-- ⏳ `POST /api/search` i `POST /api/qna` — PR #6/#7
-- ⏳ Frontend implementacija po UI-SPEC-u — paralelno sa backend PR-ovima
+- ✅ Tesseract OCR sidecar (srp + srp_latn, 300 DPI)
+- ✅ SQL migration sistem (hash-tracked) — trenutno na `0009_conversations.sql`
+
+Backend (Faza 1):
+- ✅ Ingest pipeline — parser (PDF/DOCX), OCR fallback, chunking po članovima, BGE-M3 embedding, upis u `rag.chunks`
+- ✅ `POST /api/documents` + analyze + PATCH (edit metapodataka) + DELETE (soft) + GET list
+- ✅ `GET /api/chunks/:id` — puni sadržaj segmenta za SourceDrawer
+- ✅ `POST /api/search` — hibridna pretraga (BGE-M3 cosine + pg_trgm), RRF fuzija
+- ✅ `POST /api/qna` — Claude Sonnet 4-6 streaming + obavezno citiranje, multi-turn istorija
+- ✅ `/api/conversations` — perzistencija razgovora po browser sesiji (UUID localStorage), soft delete
+
+Frontend:
+- ✅ Chat ekran sa SSE streaming-om, EmptyState sa 2×2 quick action grid-om
+- ✅ Citati su klikabilni — SourceDrawer slide-out sa punim sadržajem chunka i metapodacima
+- ✅ Multi-turn razgovori sa sidebar-om i istorijom (klik za nastavak, X za brisanje)
+- ✅ Ingest ekran — drag-drop, auto-popunjavanje metapodataka iz teksta (heuristika), pipeline progress, lista sa edit/delete
+- ✅ Routing: `/` (novi razgovor), `/razgovor/:id` (sačuvani), `/dokumenti`
+
+**Trenutno otvoreni rad:**
+- 🔧 *Sljedeći PR:* Background streaming odgovora — trenutno "Novi razgovor" ne radi dok stream ide; treba dozvoliti da Claude završi u pozadini (poruka se uredno upiše u DB), a UI da se odmah oslobodi za novi chat.
+
+**Pending (Faza 1.5+):**
+- ⏳ `/document/:id` — ekran sa pregledom segmenata i izvučenih metapodataka
+- ⏳ Faza 2 — LDAP/AD auth, RBAC, audit log UI, nginx + TLS, backup
+- ⏳ Faza 3 — Contract Intelligence (analiza rizika ugovora, Word eksport sa tracked changes)
 
 ---
 
@@ -358,9 +376,11 @@ Trenutno definisano:
 | Domen | Tipovi |
 |---|---|
 | Taksonomija | `DocumentType`, `LegalArea`, `DocumentStatus`, `DocumentGroup` |
-| Dokumenti | `DocumentMeta` |
+| Dokumenti | `DocumentMeta`, `DocumentPatchRequest`, `DocumentListQuery`, `DocumentListResponse`, `AnalyzeResponse` |
 | Pretraga | `SearchRequest`, `SearchHit`, `SearchResponse` |
-| Q&A | `Citat`, `QnaRequest`, `QnaResponse`, `QnaStreamEvent` (SSE) |
+| Q&A | `Citat`, `QnaPoruka`, `QnaRequest`, `QnaResponse`, `QnaStreamEvent` (SSE) |
+| Chunkovi | `ChunkDetail` (SourceDrawer) |
+| Razgovori | `RazgovorListItem`, `SacuvanaPoruka`, `RazgovorDetail` |
 | Ingest | `IngestStage`, `INGEST_STAGE_ORDER`, `IngestStatus`, `IngestPatchRequest` |
 | Health | `HealthResponse` |
 | Greške | `ApiError` (`{ kod, poruka }`) |
@@ -371,70 +391,42 @@ Kad dodaješ novi endpoint, prvo definiši tipove u `shared/types.ts`, pa onda i
 
 ## API endpointi
 
-### Implementirani
+Svi tipovi su u [shared/src/types.ts](shared/src/types.ts). Ne-2xx odgovori vraćaju `{ greska: string, detalji?: ... }`.
 
-#### `GET /api/health`
+### Health
 
-Provjera zdravlja svih komponenti. Vraća `HealthResponse`.
+| Metod | Putanja | Opis |
+|---|---|---|
+| `GET` | `/api/health` | `HealthResponse` — status Postgres-a, pgvector-a, embedding i OCR sidecara |
 
-```bash
-curl http://localhost:4000/api/health
-```
+### Dokumenti (ingest + upravljanje)
 
-```json
-{
-  "status": "ok",
-  "vrijeme": "2026-05-25T11:00:00.000Z",
-  "postgres": "ok",
-  "pgvector": "ok",
-  "embeddings": "ok",
-  "verzija": "0.1.0"
-}
-```
-
-`status: "degraded"` znači da je bar jedna komponenta `down`/`loading`/`missing`.
-
-#### `POST /api/documents`
-
-Multipart upload PDF ili DOCX dokumenta.
-
-**Polja:**
-- `file` (binary): PDF (`application/pdf`) ili DOCX. Maksimalno 50 MB.
-- `metadata` (string, JSON): vidi `DocumentMeta` u [shared/types.ts](shared/src/types.ts).
-
-**Primjer:**
-```bash
-curl -X POST http://localhost:4000/api/documents \
-  -F "file=@zakon.pdf;type=application/pdf" \
-  -F 'metadata={"naslov":"Zakon o radu","tip":"ZAKON","oblast":"RADNO_PRAVO","datum":"2024-01-15","organSud":"Skupština CG"}'
-```
-
-**Odgovori:**
-
-| HTTP | Značenje |
-|------|----------|
-| `201 Created` | Tijelo: `DocumentMeta`. Fajl je sačuvan, tekst ekstraktovan, audit upisan. |
-| `400 Bad Request` | Nedostaje `file`, prazan fajl, ili neispravni `metadata` (Zod greške u `detalji`). |
-| `409 Conflict` | Dokument sa istim SHA-256 hash-om već postoji. Tijelo sadrži `postojeci.id` i `postojeci.naslov`. |
-| `413 Payload Too Large` | Fajl > 50 MB. |
-| `415 Unsupported Media Type` | MIME tip nije PDF ili DOCX. |
-| `422 Unprocessable Entity` | Fajl je validan MIME tip, ali parser ne može pročitati sadržaj (oštećen fajl). |
-
-### Planirani (UI-SPEC §6.1)
-
-| Endpoint | Zahtjev | Odgovor | PR |
+| Metod | Putanja | Tijelo / parametri | Odgovor |
 |---|---|---|---|
-| `POST /api/qna` | `QnaRequest` | `QnaResponse` ili SSE `QnaStreamEvent` | #7 |
-| `POST /api/search` | `SearchRequest` | `SearchResponse` | #6 |
-| `POST /api/ingest` | multipart | `IngestStatus[]` | proširenje #2 |
-| `GET /api/ingest/:id/stream` | — | SSE `IngestStatus` | proširenje #2 |
-| `GET /api/ingest/:id` | — | `IngestStatus` | proširenje #2 |
-| `PATCH /api/ingest/:id` | `IngestPatchRequest` | `IngestStatus` | proširenje #2 |
-| `GET /api/documents` | query filteri | `DocumentMeta[]` | #6 |
-| `DELETE /api/documents/:id` | — | `204` | #6 |
-| `GET /api/documents/:id` | — | `DocumentMeta` + segmenti | Faza 1.5 |
+| `POST` | `/api/documents` | multipart: `file` (PDF/DOCX ≤ 50 MB) + `metadata` (JSON `DocumentMeta`) | `201` sa `DocumentMeta`, `409` ako hash već postoji |
+| `POST` | `/api/documents/analyze` | multipart: `file` | `AnalyzeResponse` — heuristički prijedlog metapodataka (ne snima fajl) |
+| `GET` | `/api/documents` | query: `tip`, `oblast`, `status`, `traziNaslov`, `limit`, `offset` | `DocumentListResponse` |
+| `GET` | `/api/documents/:id/status` | — | `IngestStatus` (polling tokom pipeline-a) |
+| `PATCH` | `/api/documents/:id` | `DocumentPatchRequest` (sva polja opciona) | `DocumentMeta` |
+| `DELETE` | `/api/documents/:id` | — | `204`, soft delete |
 
-Ne-2xx odgovori uvijek vraćaju `ApiError` (`{ kod, poruka }`); `poruka` se prikazuje korisniku.
+### Pretraga i Q&A
+
+| Metod | Putanja | Tijelo | Odgovor |
+|---|---|---|---|
+| `POST` | `/api/search` | `SearchRequest` | `SearchResponse` (hibridna RRF, cosine skor) |
+| `POST` | `/api/qna` | `QnaRequest` | SSE stream `QnaStreamEvent` (razgovor / citati / token / kraj / greska) |
+| `GET` | `/api/chunks/:id` | — | `ChunkDetail` — puni sadržaj segmenta + meta dokumenta (SourceDrawer) |
+
+### Razgovori (sidebar history)
+
+| Metod | Putanja | Tijelo / parametri | Odgovor |
+|---|---|---|---|
+| `GET` | `/api/conversations` | query: `sesijaId` (UUID iz localStorage) | `{ razgovori: RazgovorListItem[] }` |
+| `GET` | `/api/conversations/:id` | — | `RazgovorDetail` sa porukama i citatima |
+| `DELETE` | `/api/conversations/:id` | — | `204`, soft delete |
+
+Razgovor se kreira lijeno kroz `POST /api/qna` (kad `razgovorId` nije proslijeđen) — backend emituje prvi SSE event `{ tip: "razgovor", id, naslov }`.
 
 ---
 
@@ -443,7 +435,8 @@ Ne-2xx odgovori uvijek vraćaju `ApiError` (`{ kod, poruka }`); `poruka` se prik
 **Šeme:**
 - `documents` — registar dokumenata
 - `rag` — chunkovi + embeddinzi
-- `audit` — log ingest pipeline-a
+- `audit` — log ingest pipeline-a (akcije: UPLOAD, OCR_*, PARSE_*, CHUNK, EMBED, FAILED, DELETE, EDIT)
+- `chat` — razgovori i poruke (sidebar history)
 - `public._migrations` — track primijenjenih migracija (SHA-256 hash)
 
 **Ključne tabele:**
@@ -453,7 +446,8 @@ documents.documents
   id (uuid PK), naslov, tip, oblast, status, datum, organ_sud,
   broj_sluzbenog_lista, jezik, broj_strana, velicina_bajtova,
   izvorni_fajl_putanja, izvorni_fajl_hash (UNIQUE), izvorni_fajl_mimetip,
-  tekst (TEXT), ocr_obavljen, ocr_obavljen_u, chunked_u, embedded_u,
+  tekst (TEXT), faza, ingest_greska,
+  ocr_obavljen, ocr_obavljen_u, chunked_u, embedded_u,
   kreirano, azurirano, obrisano (soft delete)
 
 rag.chunks
@@ -464,6 +458,14 @@ rag.chunks
 audit.ingest_log
   id (bigserial PK), document_id (FK, nullable), akcija, status,
   detalji (jsonb), greska, trajanje_ms, kreirano
+
+chat.razgovori
+  id (uuid PK), sesija_id (uuid, iz localStorage), naslov,
+  kreirano, azurirano, obrisano (soft delete)
+
+chat.poruke
+  id (uuid PK), razgovor_id (FK, CASCADE), redni_broj,
+  uloga (user|ai), tekst, citati (jsonb), kreirano
 ```
 
 **Pravila migracija:**
@@ -568,13 +570,23 @@ Browser i fetch postavljaju MIME automatski iz file ekstenzije.
 
 ## Roadmap
 
-### Faza 1 — preostalo
+### Faza 1 — gotovo (PR #4 – #16)
 
-- [ ] **PR #4** — OCR fallback (Tesseract) za skenirane PDF-ove (`tekst.length == 0 && broj_strana > 0`)
-- [ ] **PR #5** — Chunking pravnih dokumenata (preferirati granice po članovima zakona, fallback fiksna veličina) + poziv embedding sidecar-a + upis u `rag.chunks`
-- [ ] **PR #6** — `POST /api/search` semantička + leksička hibridna pretraga, `GET/DELETE /api/documents`
-- [ ] **PR #7** — `POST /api/qna` Q&A endpoint sa Claude API-jem, SSE streaming, obavezno citiranje
-- [ ] **PR #8** — Frontend implementacija (Chat + Ingest ekrani) po UI-SPEC-u, počevši od `PravnaAI_Preview.jsx` kao referentne tačke
+- [x] **PR #4** — OCR fallback (Tesseract) za skenirane PDF-ove
+- [x] **PR #5** — Chunking po članovima zakona + BGE-M3 embedding + upis u `rag.chunks`
+- [x] **PR #6** — `POST /api/search` hibridna pretraga + `GET/DELETE /api/documents`
+- [x] **PR #7/#9** — `POST /api/qna` SSE streaming + obavezno citiranje (Claude Sonnet 4-6)
+- [x] **PR #8/#10** — Frontend Chat ekran po UI-SPEC-u
+- [x] **PR #11** — Ingest ekran (drag-drop + pipeline + tabela)
+- [x] **PR #12** — Auto-popunjavanje metapodataka iz PDF teksta (heuristika), default latinica
+- [x] **PR #13** — Edit metapodataka uploadovanog dokumenta (PATCH endpoint + modal)
+- [x] **PR #14** — SourceDrawer slide-out za klikabilne citate, cosine skor fix, multi-turn istorija
+- [x] **PR #15** — 2×2 grid brzih tema na empty state-u
+- [x] **PR #16** — Sidebar sa istorijom razgovora, perzistencija u DB, `/razgovor/:id` ruta
+
+### Sljedeći PR (Faza 1 — polish)
+
+- [ ] **Background streaming** — "Novi razgovor" mora da bude dostupan dok prethodni odgovor još uvijek stiže. Stream nastavlja u pozadini, finalna AI poruka se uredno upisuje u DB i može da se pročita kroz sidebar history. Trenutno `obrada=true` blokira UI dok stream ne završi.
 
 ### Faza 1.5
 
