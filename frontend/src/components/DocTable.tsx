@@ -3,6 +3,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
+  Pencil,
   Search,
   Trash2,
 } from "lucide-react";
@@ -20,6 +21,7 @@ import {
   listDokumenata,
 } from "../lib/api.js";
 import { TIP_META } from "../lib/docTypes.js";
+import { EditDocumentModal } from "./EditDocumentModal.js";
 import { TypeBadge } from "./TypeBadge.js";
 
 const OBLAST_LABELS: Record<LegalArea, string> = {
@@ -73,6 +75,7 @@ export function DocTable({ osvezenje = 0 }: Props) {
   const [ucitavanje, setUcitavanje] = useState(false);
   const [greska, setGreska] = useState<string | null>(null);
   const [brisuId, setBrisuId] = useState<string | null>(null);
+  const [editujem, setEditujem] = useState<DocumentMeta | null>(null);
 
   // Debounce traziNaslov da ne hammeramo backend pri svakom slovu.
   useEffect(() => {
@@ -309,47 +312,78 @@ export function DocTable({ osvezenje = 0 }: Props) {
                   <FazaBadge faza={d.faza} />
                 </Td>
                 <Td align="right">
-                  <button
-                    type="button"
-                    onClick={() => obrisi(d)}
-                    disabled={brisuId === d.id}
-                    aria-label={`Obriši ${d.naslov}`}
-                    style={{
-                      background: "transparent",
-                      border: "1px solid var(--border)",
-                      borderRadius: "var(--r-button)",
-                      padding: "5px 9px",
-                      color: "var(--muted)",
-                      cursor: brisuId === d.id ? "default" : "pointer",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 4,
-                      fontSize: 11.5,
-                    }}
-                    onMouseEnter={(e) => {
-                      if (brisuId !== d.id) {
+                  <div style={{ display: "inline-flex", gap: 6 }}>
+                    <button
+                      type="button"
+                      onClick={() => setEditujem(d)}
+                      aria-label={`Izmijeni ${d.naslov}`}
+                      style={akcijaBtnStyle}
+                      onMouseEnter={(e) => {
                         e.currentTarget.style.borderColor =
-                          "color-mix(in srgb, var(--error) 50%, var(--border))";
-                        e.currentTarget.style.color = "var(--error)";
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = "var(--border)";
-                      e.currentTarget.style.color = "var(--muted)";
-                    }}
-                  >
-                    {brisuId === d.id ? (
-                      <Loader2 size={12} className="spin" />
-                    ) : (
-                      <Trash2 size={12} />
-                    )}
-                  </button>
+                          "color-mix(in srgb, var(--accent) 50%, var(--border))";
+                        e.currentTarget.style.color = "var(--accent)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.borderColor = "var(--border)";
+                        e.currentTarget.style.color = "var(--muted)";
+                      }}
+                    >
+                      <Pencil size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => obrisi(d)}
+                      disabled={brisuId === d.id}
+                      aria-label={`Obriši ${d.naslov}`}
+                      style={{
+                        ...akcijaBtnStyle,
+                        cursor: brisuId === d.id ? "default" : "pointer",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (brisuId !== d.id) {
+                          e.currentTarget.style.borderColor =
+                            "color-mix(in srgb, var(--error) 50%, var(--border))";
+                          e.currentTarget.style.color = "var(--error)";
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.borderColor = "var(--border)";
+                        e.currentTarget.style.color = "var(--muted)";
+                      }}
+                    >
+                      {brisuId === d.id ? (
+                        <Loader2 size={12} className="spin" />
+                      ) : (
+                        <Trash2 size={12} />
+                      )}
+                    </button>
+                  </div>
                 </Td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {editujem && (
+        <EditDocumentModal
+          dokument={editujem}
+          onZatvori={() => setEditujem(null)}
+          onSacuvano={(azuriran) => {
+            setEditujem(null);
+            setPodaci((p) =>
+              p
+                ? {
+                    ...p,
+                    dokumenti: p.dokumenti.map((d) =>
+                      d.id === azuriran.id ? { ...d, ...azuriran } : d,
+                    ),
+                  }
+                : p,
+            );
+          }}
+        />
+      )}
 
       {/* Paginacija */}
       {podaci && podaci.ukupno > STRANICA && (
@@ -489,6 +523,19 @@ const selectStyle: React.CSSProperties = {
   fontFamily: "var(--font-sans)",
   outline: "none",
   minWidth: 130,
+};
+
+const akcijaBtnStyle: React.CSSProperties = {
+  background: "transparent",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--r-button)",
+  padding: "5px 9px",
+  color: "var(--muted)",
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  fontSize: 11.5,
 };
 
 const pageBtnStyle: React.CSSProperties = {
