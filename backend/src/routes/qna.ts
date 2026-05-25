@@ -43,6 +43,15 @@ const STATUS = ["NACRT", "VAZECI", "STAVLJEN_VAN_SNAGE", "ARHIVA"] as const;
 
 const qnaSchema = z.object({
   pitanje: z.string().trim().min(3).max(2000),
+  istorija: z
+    .array(
+      z.object({
+        uloga: z.enum(["user", "ai"]),
+        tekst: z.string().min(1).max(8000),
+      }),
+    )
+    .max(50)
+    .optional(),
   filteri: z
     .object({
       tip: z.array(z.enum(TIP)).min(1).optional(),

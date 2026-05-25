@@ -124,8 +124,20 @@ export interface Citat {
   tip: DocumentType;
 }
 
+/** Jedna razmjena u istoriji razgovora — koristi se za multi-turn Q&A. */
+export interface QnaPoruka {
+  uloga: "user" | "ai";
+  tekst: string;
+}
+
 export interface QnaRequest {
   pitanje: string;
+  /**
+   * Istorija razgovora prije trenutnog pitanja, hronološki (najstarija prva).
+   * NE uključuje trenutno pitanje — ono ide u `pitanje`. Backend uzima samo
+   * zadnjih N (vidi MAX_ISTORIJA u services/qna.ts) da ograniči cost.
+   */
+  istorija?: QnaPoruka[];
   filteri?: SearchRequest["filteri"];
 }
 
@@ -220,6 +232,36 @@ export interface AnalyzeResponse {
   jezik?: "sr-Cyrl" | "sr-Latn" | "mixed";
   /** Pouzdanost svakog detektovanog polja (0..1) — za eventualno označavanje u UI. */
   pouzdanost?: Partial<Record<keyof Omit<AnalyzeResponse, "pouzdanost">, number>>;
+}
+
+// ---------------------------------------------------------------------------
+// Detalj chunka (SourceDrawer — klik na citat ispod AI odgovora)
+// ---------------------------------------------------------------------------
+
+/**
+ * Detalji jednog chunka za prikaz pune verzije citata.
+ * Vraća ga GET /api/chunks/:id. Sadrži cijeli `sadrzaj` chunka (ne samo
+ * isjecak kao u Citat) plus metapodatke o dokumentu kome pripada.
+ */
+export interface ChunkDetail {
+  id: string;
+  documentId: string;
+  redniBroj: number;
+  sadrzaj: string;
+  strukturaPutanja: string | null;
+  stranaOd: number | null;
+  stranaDo: number | null;
+  dokument: {
+    id: string;
+    naslov: string;
+    tip: DocumentType;
+    oblast: LegalArea;
+    status: DocumentStatus;
+    datum: string | null;
+    organSud: string | null;
+    brojSluzbenogLista: string | null;
+    jezik: "sr-Cyrl" | "sr-Latn" | "mixed";
+  };
 }
 
 // ---------------------------------------------------------------------------
