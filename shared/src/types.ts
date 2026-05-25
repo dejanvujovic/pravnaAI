@@ -194,6 +194,7 @@ export interface HealthResponse {
   postgres: "ok" | "down";
   pgvector: "ok" | "missing";
   embeddings: "ok" | "loading" | "down";
+  ocr: "ok" | "down";
   verzija: string;
 }
 

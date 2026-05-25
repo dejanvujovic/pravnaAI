@@ -32,6 +32,7 @@ export function App() {
             <li>PostgreSQL: {health.postgres}</li>
             <li>pgvector: {health.pgvector}</li>
             <li>Embeddings (BGE-M3): {health.embeddings}</li>
+            <li>OCR (Tesseract): {health.ocr}</li>
             <li>Verzija: {health.verzija}</li>
             <li>Vrijeme: {new Date(health.vrijeme).toLocaleString("sr-Latn-ME")}</li>
           </ul>

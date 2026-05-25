@@ -201,16 +201,25 @@ documentsRouter.post(
     const documentId = randomUUID();
     const stored = await storeFile(documentId, req.file.originalname, req.file.buffer);
 
-    // 3. Parsiranje teksta. Greška ovdje znači da fajl nije validan PDF/DOCX —
-    //    vraćamo 422, ali ne brišemo fajl jer ga je korisnik već uspješno
-    //    uploadovao; soft delete + reindex u kasnijoj fazi.
+    // 3. Parsiranje teksta — za skenirane PDF-ove parser interno poziva
+    //    OCR sidecar (može trajati par minuta za desetine strana). Greška
+    //    ovdje znači da fajl nije validan PDF/DOCX (ili OCR servis pada),
+    //    pa vraćamo 422.
     let tekst: string;
     let brojStrana: number | null;
+    let ocrKoristen: boolean;
+    let ocrTrajanjeMs: number | null;
     const parseStart = Date.now();
     try {
-      const parsed = await parseFile(req.file.buffer, req.file.mimetype);
+      const parsed = await parseFile(
+        req.file.buffer,
+        req.file.mimetype,
+        req.file.originalname,
+      );
       tekst = parsed.tekst;
       brojStrana = parsed.brojStrana;
+      ocrKoristen = parsed.ocrKoristen;
+      ocrTrajanjeMs = parsed.ocrTrajanjeMs;
     } catch (e) {
       await removeFileQuiet(stored.putanjaApsolutna);
       // Document još nije u DB-u (INSERT dolazi tek poslije parsiranja),
@@ -248,8 +257,8 @@ documentsRouter.post(
             id, naslov, tip, oblast, status, datum, organ_sud, broj_sluzbenog_lista,
             jezik, broj_strana, velicina_bajtova,
             izvorni_fajl_putanja, izvorni_fajl_hash, izvorni_fajl_mimetip,
-            tekst
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            tekst, ocr_obavljen, ocr_obavljen_u
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
          RETURNING id, naslov, tip, oblast, status, datum, organ_sud, broj_sluzbenog_lista,
                    jezik, broj_strana, velicina_bajtova, kreirano, azurirano,
                    (SELECT COUNT(*)::int
@@ -271,6 +280,8 @@ documentsRouter.post(
           hash,
           req.file.mimetype,
           tekst,
+          ocrKoristen,
+          ocrKoristen ? new Date() : null,
         ],
       );
 
@@ -295,11 +306,27 @@ documentsRouter.post(
             brojStrana,
             duzinaTeksta: tekst.length,
             jeBezTeksta: tekst.length === 0,
+            ocrKoristen,
           },
           trajanjeMs: parseTrajanjeMs,
         },
         client,
       );
+
+      if (ocrKoristen) {
+        await logIngest(
+          {
+            documentId,
+            akcija: "OCR_DONE",
+            detalji: {
+              duzinaTeksta: tekst.length,
+              brojStrana,
+            },
+            trajanjeMs: ocrTrajanjeMs ?? undefined,
+          },
+          client,
+        );
+      }
 
       await client.query("COMMIT");
 

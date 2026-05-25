@@ -32,6 +32,19 @@ services:
       EMBEDDING_MAX_BATCH: "32"
       LOG_LEVEL: INFO
 
+  ocr:
+    build:
+      context: ./ocr
+    container_name: rtcg-legal-ai-ocr
+    restart: unless-stopped
+    ports:
+      - "${OCR_PORT:-8002}:8002"
+    environment:
+      OCR_LANGS: ${TESSERACT_LANGS:-srp+srp_latn}
+      OCR_DPI: ${OCR_DPI:-300}
+      OCR_PSM: "3"
+      LOG_LEVEL: INFO
+
 volumes:
   postgres-data:
     name: rtcg-legal-ai-postgres-data
