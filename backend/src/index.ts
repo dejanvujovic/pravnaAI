@@ -5,6 +5,7 @@ import type { HealthResponse } from "@rtcg/shared";
 import { config } from "./config.js";
 import { pingPgvector, pingPostgres, pool } from "./db.js";
 import { pingEmbeddings } from "./services/embeddings.js";
+import { pingOcr } from "./services/ocr.js";
 import { documentsRouter } from "./routes/documents.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
@@ -16,17 +17,22 @@ app.use(express.json({ limit: "10mb" }));
 app.use("/api/documents", documentsRouter);
 
 app.get("/api/health", async (_req, res) => {
-  const [pg, vec, emb] = await Promise.all([
+  const [pg, vec, emb, ocr] = await Promise.all([
     pingPostgres(),
     pingPgvector(),
     pingEmbeddings(),
+    pingOcr(),
   ]);
   const body: HealthResponse = {
-    status: pg === "ok" && vec === "ok" && emb === "ok" ? "ok" : "degraded",
+    status:
+      pg === "ok" && vec === "ok" && emb === "ok" && ocr === "ok"
+        ? "ok"
+        : "degraded",
     vrijeme: new Date().toISOString(),
     postgres: pg,
     pgvector: vec,
     embeddings: emb,
+    ocr,
     verzija: "0.1.0",
   };
   res.json(body);

@@ -22,6 +22,8 @@
     "db:migrate:dry": "npm run migrate --workspace=backend -- --dry",
     "embeddings:up": "docker compose up -d --build embeddings",
     "embeddings:logs": "docker compose logs -f embeddings",
+    "ocr:up": "docker compose up -d --build ocr",
+    "ocr:logs": "docker compose logs -f ocr",
     "stack:up": "docker compose up -d --build"
   },
   "engines": {

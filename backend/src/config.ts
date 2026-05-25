@@ -54,9 +54,11 @@ export const config = {
   },
 
   ocr: {
-    tesseractBin: opt("TESSERACT_BIN", "tesseract"),
+    url: opt("OCR_URL", "http://localhost:8002"),
     languages: opt("TESSERACT_LANGS", "srp+srp_latn"),
     dpi: intOpt("OCR_DPI", 300),
+    // OCR scan dokumenta na više desetina strana može trajati par minuta.
+    timeoutMs: 5 * 60 * 1000,
     uploadsDir: opt("UPLOADS_DIR", "./data/uploads"),
   },
 } as const;
