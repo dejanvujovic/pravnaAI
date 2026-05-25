@@ -89,6 +89,7 @@ interface DocumentRow {
   jezik: string;
   broj_strana: number | null;
   velicina_bajtova: string | null; // BIGINT vraća se kao string iz pg-a
+  broj_segmenata: number; // izračunato kao COUNT(*) iz rag.chunks
   kreirano: Date;
   azurirano: Date;
 }
@@ -110,6 +111,7 @@ function rowToMeta(r: DocumentRow): DocumentMeta {
     jezik: r.jezik as DocumentMeta["jezik"],
     brojStrana: r.broj_strana,
     velicinaBajtova: r.velicina_bajtova ? Number(r.velicina_bajtova) : null,
+    brojSegmenata: r.broj_segmenata,
     kreirano: r.kreirano.toISOString(),
     azurirano: r.azurirano.toISOString(),
   };
@@ -249,7 +251,10 @@ documentsRouter.post(
             tekst
          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          RETURNING id, naslov, tip, oblast, status, datum, organ_sud, broj_sluzbenog_lista,
-                   jezik, broj_strana, velicina_bajtova, kreirano, azurirano`,
+                   jezik, broj_strana, velicina_bajtova, kreirano, azurirano,
+                   (SELECT COUNT(*)::int
+                      FROM rag.chunks
+                     WHERE document_id = $1::uuid) AS broj_segmenata`,
         [
           documentId,
           metadata.naslov,
