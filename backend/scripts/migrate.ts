@@ -48,7 +48,10 @@ async function loadMigrations(): Promise<MigrationFile[]> {
   for (const ime of sqlFiles) {
     const putanja = resolve(MIGRATIONS_DIR, ime);
     const sadrzaj = await readFile(putanja, "utf-8");
-    const hash = createHash("sha256").update(sadrzaj).digest("hex");
+    // Normalizuj CRLF -> LF prije hashiranja: na Windows-u git checkout
+    // konvertuje line-endings što bi inače dalo različit hash istog fajla.
+    const zaHash = sadrzaj.replace(/\r\n/g, "\n");
+    const hash = createHash("sha256").update(zaHash).digest("hex");
     result.push({ ime, putanja, sadrzaj, hash });
   }
   return result;

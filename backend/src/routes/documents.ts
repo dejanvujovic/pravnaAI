@@ -15,11 +15,12 @@ import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
-import type { DocumentMeta } from "@rtcg/shared";
+import type { DocumentMeta, IngestStage, IngestStatus } from "@rtcg/shared";
 import { pool } from "../db.js";
 import { hashBuffer, removeFileQuiet, storeFile } from "../services/storage.js";
 import { logIngest } from "../services/audit.js";
 import { ParserError, SUPPORTED_MIMETYPES, parseFile } from "../services/parser.js";
+import { scheduleIngest } from "../services/ingest_worker.js";
 
 // ---------------------------------------------------------------------------
 // Multer (memory storage; fajlovi do 50 MB)
@@ -257,8 +258,8 @@ documentsRouter.post(
             id, naslov, tip, oblast, status, datum, organ_sud, broj_sluzbenog_lista,
             jezik, broj_strana, velicina_bajtova,
             izvorni_fajl_putanja, izvorni_fajl_hash, izvorni_fajl_mimetip,
-            tekst, ocr_obavljen, ocr_obavljen_u
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            tekst, ocr_obavljen, ocr_obavljen_u, faza
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'CHUNKING')
          RETURNING id, naslov, tip, oblast, status, datum, organ_sud, broj_sluzbenog_lista,
                    jezik, broj_strana, velicina_bajtova, kreirano, azurirano,
                    (SELECT COUNT(*)::int
@@ -330,6 +331,9 @@ documentsRouter.post(
 
       await client.query("COMMIT");
 
+      // Schedule chunking + embedding to run after response is sent.
+      scheduleIngest(documentId);
+
       res.status(201).json(rowToMeta(ins.rows[0]!));
     } catch (e) {
       await client.query("ROLLBACK");
@@ -357,5 +361,73 @@ documentsRouter.post(
     } finally {
       client.release();
     }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/documents/:id/status — IngestStatus za polling (UI-SPEC §6.1)
+// ---------------------------------------------------------------------------
+
+interface IngestStatusRow {
+  id: string;
+  naziv: string;
+  velicina_bajtova: string | null;
+  tip: string;
+  oblast: string | null;
+  faza: string;
+  broj_segmenata: number;
+  ocr: boolean;
+  greska: string | null;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+documentsRouter.get(
+  "/:id/status",
+  async (req: Request, res: Response): Promise<void> => {
+    const id = req.params.id;
+    if (!id || !UUID_RE.test(id)) {
+      res.status(400).json({ greska: "Neispravan ID dokumenta." });
+      return;
+    }
+
+    const r = await pool.query<IngestStatusRow>(
+      `SELECT
+         d.id,
+         COALESCE(d.izvorni_fajl_putanja, d.naslov) AS naziv,
+         d.velicina_bajtova,
+         d.tip,
+         d.oblast,
+         d.faza,
+         (SELECT COUNT(*)::int FROM rag.chunks WHERE document_id = d.id) AS broj_segmenata,
+         d.ocr_obavljen AS ocr,
+         d.ingest_greska AS greska
+       FROM documents.documents d
+       WHERE d.id = $1::uuid AND d.obrisano IS NULL`,
+      [id],
+    );
+
+    if (r.rowCount === 0) {
+      res.status(404).json({ greska: "Dokument nije pronađen." });
+      return;
+    }
+
+    const row = r.rows[0]!;
+    // Naziv je relativna putanja "uuid/filename.pdf" — uzmimo samo basename.
+    const basename = row.naziv.split("/").pop() ?? row.naziv;
+
+    const status: IngestStatus = {
+      id: row.id,
+      naziv: basename,
+      velicinaBajtova: row.velicina_bajtova ? Number(row.velicina_bajtova) : null,
+      tip: row.tip as IngestStatus["tip"],
+      oblast: (row.oblast as IngestStatus["oblast"]) ?? null,
+      faza: row.faza as IngestStage,
+      brojSegmenata: row.broj_segmenata,
+      ocr: row.ocr,
+      greska: row.greska,
+    };
+
+    res.json(status);
   },
 );
