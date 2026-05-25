@@ -18,7 +18,8 @@ export type IngestAkcija =
   | "PARSE_PDF"
   | "CHUNK"
   | "EMBED"
-  | "FAILED";
+  | "FAILED"
+  | "DELETE";
 
 export type IngestStatus = "OK" | "GRESKA" | "PRESKOCENO";
 

@@ -57,8 +57,16 @@ button {
   }
 }
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .fadeup {
   animation: fadeUp 0.35s ease both;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
 }
 
 /* Custom scrollbar — diskretan u dark temi. */

@@ -11,7 +11,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { config } from "../config.js";
 
 // Relativne putanje u UPLOADS_DIR rješavamo u odnosu na koren monorepa,
@@ -76,4 +76,18 @@ export async function removeFileQuiet(absolutePath: string): Promise<void> {
   } catch {
     /* nothing — file already gone or never existed */
   }
+}
+
+/**
+ * Vrati apsolutnu putanju iz relativne (kakva se čuva u DB-u). Validira da
+ * se nakon resolve-a ostaje unutar UPLOADS_ROOT (zaštita od path traversal-a
+ * ako bi se u DB nekako našao "../"). Vraća null ako je putanja van root-a
+ * ili ako je prazna.
+ */
+export function resolveStoredPath(putanjaRelativna: string): string | null {
+  if (!putanjaRelativna) return null;
+  const apsolutna = resolve(UPLOADS_ROOT, putanjaRelativna);
+  const rel = relative(UPLOADS_ROOT, apsolutna);
+  if (rel.startsWith("..") || isAbsolute(rel)) return null;
+  return apsolutna;
 }

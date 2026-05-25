@@ -185,6 +185,25 @@ export interface IngestPatchRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Listing dokumenata (Ingest ekran)
+// ---------------------------------------------------------------------------
+
+/** Query parametri za GET /api/documents. Sva polja opciona. */
+export interface DocumentListQuery {
+  tip?: DocumentType;
+  oblast?: LegalArea;
+  status?: DocumentStatus;
+  traziNaslov?: string; // fuzzy match preko pg_trgm
+  limit?: number; // default 50, max 200
+  offset?: number; // default 0
+}
+
+export interface DocumentListResponse {
+  dokumenti: Array<DocumentMeta & { faza: IngestStage }>;
+  ukupno: number;
+}
+
+// ---------------------------------------------------------------------------
 // Health
 // ---------------------------------------------------------------------------
 

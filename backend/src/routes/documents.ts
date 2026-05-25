@@ -1,13 +1,14 @@
 /**
  * Documents API — ingest i pretraga dokumenata.
  *
- * Trenutni endpointi:
- *   POST /api/documents        Multipart upload (PDF/DOCX) + JSON metapodaci.
+ * Endpointi:
+ *   POST   /api/documents        Multipart upload (PDF/DOCX) + JSON metapodaci.
+ *   GET    /api/documents        Lista dokumenata sa filterima i paginacijom.
+ *   GET    /api/documents/:id/status   IngestStatus za polling.
+ *   DELETE /api/documents/:id    Soft delete (postavlja `obrisano = NOW()`).
  *
- * Buduće (sljedeći PR-ovi):
- *   - GET    /api/documents          listing sa filterima
+ * Buduće:
  *   - GET    /api/documents/:id      detalji
- *   - DELETE /api/documents/:id      soft delete
  *   - POST   /api/documents/:id/reindex
  */
 
@@ -17,7 +18,12 @@ import multer from "multer";
 import { z } from "zod";
 import type { DocumentMeta, IngestStage, IngestStatus } from "@rtcg/shared";
 import { pool } from "../db.js";
-import { hashBuffer, removeFileQuiet, storeFile } from "../services/storage.js";
+import {
+  hashBuffer,
+  removeFileQuiet,
+  resolveStoredPath,
+  storeFile,
+} from "../services/storage.js";
 import { logIngest } from "../services/audit.js";
 import { ParserError, SUPPORTED_MIMETYPES, parseFile } from "../services/parser.js";
 import { scheduleIngest } from "../services/ingest_worker.js";
@@ -429,5 +435,173 @@ documentsRouter.get(
     };
 
     res.json(status);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/documents — lista dokumenata sa filterima (Ingest ekran)
+// ---------------------------------------------------------------------------
+
+const listQuerySchema = z.object({
+  tip: z
+    .enum([
+      "ZAKON",
+      "PODZAKONSKI_AKT",
+      "INTERNI_AKT",
+      "UGOVOR_O_RADU",
+      "UGOVOR_JAVNA_NABAVKA",
+      "PRESUDA",
+      "SUDSKA_PRAKSA",
+      "MISLJENJE",
+      "OSTALO",
+    ])
+    .optional(),
+  oblast: z
+    .enum([
+      "RADNO_PRAVO",
+      "JAVNE_NABAVKE",
+      "PARNICNI_POSTUPAK",
+      "UPRAVNI_POSTUPAK",
+      "MEDIJSKO_PRAVO",
+      "OBLIGACIONO",
+      "AUTORSKO",
+      "KRIVICNO",
+      "OSTALO",
+    ])
+    .optional(),
+  status: z.enum(["NACRT", "VAZECI", "STAVLJEN_VAN_SNAGE", "ARHIVA"]).optional(),
+  traziNaslov: z.string().min(1).max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+interface DocumentListRow extends DocumentRow {
+  faza: string;
+  ukupno: number;
+}
+
+documentsRouter.get(
+  "/",
+  async (req: Request, res: Response): Promise<void> => {
+    const parsed = listQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({
+        greska: "Neispravni query parametri.",
+        detalji: parsed.error.flatten(),
+      });
+      return;
+    }
+    const q = parsed.data;
+
+    // Dinamički WHERE — paramteri kroz pg placeholder-e ($1, $2, ...).
+    const where: string[] = ["d.obrisano IS NULL"];
+    const params: unknown[] = [];
+    const push = (val: unknown): string => {
+      params.push(val);
+      return `$${params.length}`;
+    };
+
+    if (q.tip) where.push(`d.tip = ${push(q.tip)}`);
+    if (q.oblast) where.push(`d.oblast = ${push(q.oblast)}`);
+    if (q.status) where.push(`d.status = ${push(q.status)}`);
+    if (q.traziNaslov) {
+      // pg_trgm similarity — koristi GIN trgm indeks na naslov.
+      where.push(`d.naslov ILIKE '%' || ${push(q.traziNaslov)} || '%'`);
+    }
+
+    const whereSql = where.join(" AND ");
+    const limitPh = push(q.limit);
+    const offsetPh = push(q.offset);
+
+    const r = await pool.query<DocumentListRow>(
+      `SELECT
+         d.id, d.naslov, d.tip, d.oblast, d.status, d.datum,
+         d.organ_sud, d.broj_sluzbenog_lista, d.jezik,
+         d.broj_strana, d.velicina_bajtova,
+         d.kreirano, d.azurirano, d.faza,
+         (SELECT COUNT(*)::int FROM rag.chunks WHERE document_id = d.id) AS broj_segmenata,
+         COUNT(*) OVER()::int AS ukupno
+       FROM documents.documents d
+       WHERE ${whereSql}
+       ORDER BY d.kreirano DESC
+       LIMIT ${limitPh} OFFSET ${offsetPh}`,
+      params,
+    );
+
+    const ukupno = r.rows[0]?.ukupno ?? 0;
+    const dokumenti = r.rows.map((row) => ({
+      ...rowToMeta(row),
+      faza: row.faza as IngestStage,
+    }));
+
+    res.json({ dokumenti, ukupno });
+  },
+);
+
+// ---------------------------------------------------------------------------
+// DELETE /api/documents/:id — soft delete (postavlja obrisano = NOW())
+// ---------------------------------------------------------------------------
+
+documentsRouter.delete(
+  "/:id",
+  async (req: Request, res: Response): Promise<void> => {
+    const id = req.params.id;
+    if (!id || !UUID_RE.test(id)) {
+      res.status(400).json({ greska: "Neispravan ID dokumenta." });
+      return;
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const r = await client.query<{ izvorni_fajl_putanja: string | null }>(
+        `UPDATE documents.documents
+            SET obrisano = NOW()
+          WHERE id = $1::uuid AND obrisano IS NULL
+        RETURNING izvorni_fajl_putanja`,
+        [id],
+      );
+
+      if (r.rowCount === 0) {
+        await client.query("ROLLBACK");
+        res.status(404).json({ greska: "Dokument nije pronađen ili je već obrisan." });
+        return;
+      }
+
+      // Brišemo i chunkove — soft delete dokumenta isključuje ih iz pretrage
+      // ali vector indeks i dalje zauzima prostor. Hard delete chunkova je OK
+      // jer su izvedeni iz dokumenta i mogu se rekonstruisati ponovnim ingest-om.
+      await client.query(
+        `DELETE FROM rag.chunks WHERE document_id = $1::uuid`,
+        [id],
+      );
+
+      await logIngest(
+        {
+          documentId: id,
+          akcija: "DELETE",
+          detalji: { soft: true },
+        },
+        client,
+      );
+
+      await client.query("COMMIT");
+
+      // Najbolje da se desi van transakcije — neuspjeh brisanja fajla ne smije
+      // da rolluje DB izmjenu. Tihi neuspjeh je OK jer je dokument već soft-deleted.
+      const relPath = r.rows[0]?.izvorni_fajl_putanja;
+      if (relPath) {
+        const abs = resolveStoredPath(relPath);
+        if (abs) await removeFileQuiet(abs);
+      }
+
+      res.status(204).end();
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
   },
 );
