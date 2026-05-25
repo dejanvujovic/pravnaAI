@@ -6,7 +6,15 @@
  * fetch + ReadableStream.
  */
 
-import type { HealthResponse, QnaRequest, QnaStreamEvent } from "@rtcg/shared";
+import type {
+  DocumentListQuery,
+  DocumentListResponse,
+  DocumentMeta,
+  HealthResponse,
+  IngestStatus,
+  QnaRequest,
+  QnaStreamEvent,
+} from "@rtcg/shared";
 
 const API_BASE = ""; // Vite proxy preusmjerava /api/* na backend.
 
@@ -99,4 +107,80 @@ export async function* streamQna(
   } finally {
     reader.releaseLock();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Documents API (ingest ekran)
+// ---------------------------------------------------------------------------
+
+export class DocumentsApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly detalji?: unknown,
+  ) {
+    super(message);
+    this.name = "DocumentsApiError";
+  }
+}
+
+async function obradiGreskuOdgovora(r: Response): Promise<DocumentsApiError> {
+  const tekst = await r.text();
+  let poruka = `HTTP ${r.status}`;
+  let detalji: unknown = undefined;
+  try {
+    const json = JSON.parse(tekst) as { greska?: string; detalji?: unknown };
+    if (json.greska) poruka = json.greska;
+    if (json.detalji !== undefined) detalji = json.detalji;
+  } catch {
+    if (tekst) poruka = tekst;
+  }
+  return new DocumentsApiError(poruka, r.status, detalji);
+}
+
+/** Multipart POST /api/documents — vraća kreirani DocumentMeta. */
+export async function uploadDokument(
+  fajl: File,
+  metapodaci: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<DocumentMeta> {
+  const fd = new FormData();
+  fd.append("file", fajl);
+  fd.append("metadata", JSON.stringify(metapodaci));
+
+  const r = await fetch(`${API_BASE}/api/documents`, {
+    method: "POST",
+    body: fd,
+    signal,
+  });
+  if (!r.ok) throw await obradiGreskuOdgovora(r);
+  return (await r.json()) as DocumentMeta;
+}
+
+/** GET /api/documents/:id/status — polling tokom ingest pipeline-a. */
+export async function getIngestStatus(id: string): Promise<IngestStatus> {
+  const r = await fetch(`${API_BASE}/api/documents/${id}/status`);
+  if (!r.ok) throw await obradiGreskuOdgovora(r);
+  return (await r.json()) as IngestStatus;
+}
+
+/** GET /api/documents — lista sa filterima i paginacijom. */
+export async function listDokumenata(
+  filteri: DocumentListQuery = {},
+): Promise<DocumentListResponse> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(filteri)) {
+    if (v === undefined || v === "" || v === null) continue;
+    qs.set(k, String(v));
+  }
+  const path = qs.toString().length > 0 ? `?${qs.toString()}` : "";
+  const r = await fetch(`${API_BASE}/api/documents${path}`);
+  if (!r.ok) throw await obradiGreskuOdgovora(r);
+  return (await r.json()) as DocumentListResponse;
+}
+
+/** DELETE /api/documents/:id — soft delete. */
+export async function deleteDokument(id: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/api/documents/${id}`, { method: "DELETE" });
+  if (!r.ok) throw await obradiGreskuOdgovora(r);
 }
