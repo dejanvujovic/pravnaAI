@@ -63,7 +63,7 @@ Frontend:
 - ✅ Routing: `/` (novi razgovor), `/razgovor/:id` (sačuvani), `/dokumenti`
 
 **Trenutno otvoreni rad:**
-- 🔧 *Sljedeći PR:* Background streaming odgovora — trenutno "Novi razgovor" ne radi dok stream ide; treba dozvoliti da Claude završi u pozadini (poruka se uredno upiše u DB), a UI da se odmah oslobodi za novi chat.
+- Faza 1 polishing — sljedeći potezi se određuju prema potrebama korisnika.
 
 **Pending (Faza 1.5+):**
 - ⏳ `/document/:id` — ekran sa pregledom segmenata i izvučenih metapodataka
@@ -570,7 +570,7 @@ Browser i fetch postavljaju MIME automatski iz file ekstenzije.
 
 ## Roadmap
 
-### Faza 1 — gotovo (PR #4 – #16)
+### Faza 1 — gotovo (PR #4 – #18)
 
 - [x] **PR #4** — OCR fallback (Tesseract) za skenirane PDF-ove
 - [x] **PR #5** — Chunking po članovima zakona + BGE-M3 embedding + upis u `rag.chunks`
@@ -583,10 +583,7 @@ Browser i fetch postavljaju MIME automatski iz file ekstenzije.
 - [x] **PR #14** — SourceDrawer slide-out za klikabilne citate, cosine skor fix, multi-turn istorija
 - [x] **PR #15** — 2×2 grid brzih tema na empty state-u
 - [x] **PR #16** — Sidebar sa istorijom razgovora, perzistencija u DB, `/razgovor/:id` ruta
-
-### Sljedeći PR (Faza 1 — polish)
-
-- [ ] **Background streaming** — "Novi razgovor" mora da bude dostupan dok prethodni odgovor još uvijek stiže. Stream nastavlja u pozadini, finalna AI poruka se uredno upisuje u DB i može da se pročita kroz sidebar history. Trenutno `obrada=true` blokira UI dok stream ne završi.
+- [x] **PR #18** — Background streaming: "Novi razgovor" oslobađa UI dok prethodni stream završava u pozadini i uredno snima u DB
 
 ### Faza 1.5
 

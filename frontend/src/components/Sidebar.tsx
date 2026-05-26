@@ -3,19 +3,19 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Loader2, MessageSquarePlus, Trash2 } from "lucide-react";
 import type { RazgovorListItem } from "@rtcg/shared";
 import { DocumentsApiError, deleteRazgovor, listRazgovora } from "../lib/api.js";
+import { subscribeGlobal } from "../lib/chatStreams.js";
 import { dobaviSesijaId } from "../lib/session.js";
-
-interface Props {
-  /** Inkrementira se kad novi razgovor bude kreiran — okida refetch. */
-  osvezenje?: number;
-}
 
 /**
  * Sidebar sa istorijom razgovora. Bez auth-a — razgovori se grupišu po
  * browser sesiji (UUID iz localStorage). "Novi razgovor" navigira na "/",
  * klik na stavku na "/razgovor/:id".
+ *
+ * Refresh se okida kroz `subscribeGlobal` iz `chatStreams` — kad stream
+ * kreira nov razgovor, dobije razgovorId ili završi (azurirano se mijenja),
+ * lista se automatski refetch-uje.
  */
-export function Sidebar({ osvezenje = 0 }: Props) {
+export function Sidebar() {
   const navigate = useNavigate();
   const { id: aktivniId } = useParams<{ id: string }>();
   const [razgovori, setRazgovori] = useState<RazgovorListItem[]>([]);
@@ -47,7 +47,15 @@ export function Sidebar({ osvezenje = 0 }: Props) {
     const ctrl = new AbortController();
     ucitaj(ctrl.signal);
     return () => ctrl.abort();
-  }, [ucitaj, osvezenje]);
+  }, [ucitaj]);
+
+  // Refetch kad chatStreams javi promjenu (nov razgovor, kraj stream-a).
+  useEffect(() => {
+    return subscribeGlobal(() => {
+      const ctrl = new AbortController();
+      ucitaj(ctrl.signal);
+    });
+  }, [ucitaj]);
 
   const obrisi = async (rg: RazgovorListItem, e: React.MouseEvent) => {
     e.stopPropagation();
