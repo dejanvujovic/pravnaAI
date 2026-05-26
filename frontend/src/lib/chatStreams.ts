@@ -161,6 +161,13 @@ export interface StartParams {
   pitanje: string;
   /** Postojeći razgovor — ako se postavi, backend reloaduje istoriju iz DB-a. */
   razgovorId?: string;
+  /**
+   * Poziva se kad backend lijeno kreira razgovor i emituje prvi SSE event
+   * sa `razgovorId`-jem. Chat ovo koristi da postavi URL — nije useEffect
+   * jer bi useEffect-ovo praćenje `stanje.razgovorId` pogrešno okidalo
+   * navigaciju nazad kad korisnik ručno ode sa razgovora.
+   */
+  onRazgovorKreiran?: (razgovorId: string) => void;
 }
 
 /**
@@ -216,6 +223,7 @@ export function startStream(params: StartParams): string {
             key = ev.id;
           }
           patch(entry, { razgovorId: ev.id, naslov: ev.naslov });
+          params.onRazgovorKreiran?.(ev.id);
           fireGlobal();
         } else if (ev.tip === "citati") {
           azurirajAi((m) => ({ ...m, citati: ev.citati }));

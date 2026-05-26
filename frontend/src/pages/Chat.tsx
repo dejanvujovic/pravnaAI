@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import type { Citat } from "@rtcg/shared";
 import { Composer } from "../components/Composer.js";
@@ -12,7 +19,6 @@ import {
   getState,
   startStream,
   subscribe,
-  type ConversationState,
   type Poruka,
 } from "../lib/chatStreams.js";
 
@@ -24,47 +30,40 @@ export function Chat() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Privremeni ključ za novi razgovor (URL još ne sadrži `id`). Postaje stvarni
-  // razgovorId nakon `razgovor` SSE event-a (kroz re-key u chatStreams), i tad
-  // se URL ažurira na `/razgovor/:id` preko `navigate(..., { replace })`.
+  // razgovorId kroz `chatStreams` re-key kad backend emituje `razgovor` SSE
+  // event, i tad se URL ažurira preko `navigate(..., { replace })`.
   const [pendingKey, setPendingKey] = useState<string | null>(null);
-
-  // Reset na nov pending svaki put kad korisnik navigira ka "/". Ovo pokriva
-  // i slučaj kad je već na "/" pa klikne "Novi razgovor" — bez ovoga bi
-  // ostao zaglavljen na trenutnom (pending) stream-u jer se URL nije
-  // promijenio. `location.key` se mijenja na svaku navigaciju.
+  // Ref prati zadnji pendingKey da bismo iz `onRazgovorKreiran` callback-a
+  // mogli da provjerimo da li je korisnik u međuvremenu napustio razgovor.
+  const pendingKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!razgovorIdFromUrl) setPendingKey(null);
-  }, [location.key, razgovorIdFromUrl]);
+    pendingKeyRef.current = pendingKey;
+  }, [pendingKey]);
+
+  // Reset pendingKey-a na svaku navigaciju — pokriva i "Novi razgovor" iz
+  // "/" u "/" (URL isti, ali `location.key` nov) i prelaz sa razgovora.
+  useEffect(() => {
+    setPendingKey(null);
+  }, [location.key]);
 
   const currentKey = razgovorIdFromUrl ?? pendingKey;
 
-  // Pretplati se na chatStreams stanje za trenutni razgovor.
-  const [stanje, setStanje] = useState<ConversationState>(() =>
-    currentKey ? getState(currentKey) : PRAZAN_STATE,
-  );
+  // Stanje se čita direktno iz chatStreams na svakom render-u — useReducer je
+  // samo trigger za re-render kad subscription javi promjenu. Ovo izbjegava
+  // "stale snapshot" problem koji nastaje kad useState zadrži poruke iz
+  // prethodnog razgovora dok cleanup ne otkači pretplatu.
+  const [, forceRender] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
-    if (!currentKey) {
-      setStanje(PRAZAN_STATE);
-      return;
-    }
-    setStanje(getState(currentKey));
-    return subscribe(currentKey, setStanje);
+    if (!currentKey) return;
+    return subscribe(currentKey, () => forceRender());
   }, [currentKey]);
+  const stanje = currentKey ? getState(currentKey) : PRAZAN_STATE;
 
   // Učitaj istoriju iz DB-a kad URL ima razgovor. ensureLoaded je idempotentno
   // pa ponovni mount ne refetch-uje ako je već keš-irano.
   useEffect(() => {
     if (razgovorIdFromUrl) ensureLoaded(razgovorIdFromUrl);
   }, [razgovorIdFromUrl]);
-
-  // Ako stream u novom razgovoru dobije razgovorId, postavi URL bez gubitka
-  // konteksta. `navigate` umjesto `history.replaceState` da React Router ostane
-  // sinhron — inače Sidebar-ovo `navigate("/")` ne radi.
-  useEffect(() => {
-    if (!razgovorIdFromUrl && stanje.razgovorId) {
-      navigate(`/razgovor/${stanje.razgovorId}`, { replace: true });
-    }
-  }, [stanje.razgovorId, razgovorIdFromUrl, navigate]);
 
   // Auto-scroll na dno kad poruke rastu.
   useEffect(() => {
@@ -77,16 +76,29 @@ export function Chat() {
     (pitanje: string) => {
       if (stanje.obrada) return;
       // Ako je razgovor već dobio id (URL ili promovisani pending), nastavi u njemu.
-      // Inače kreiraj nov pending entry.
+      // Inače kreiraj nov pending entry i postavi URL kad backend lijeno
+      // kreira razgovor (kroz `onRazgovorKreiran` callback — ne useEffect, da
+      // navigacija ne okida slučajno kad korisnik ode na drugi razgovor).
       const aktivniRazgovorId = razgovorIdFromUrl ?? stanje.razgovorId;
       if (aktivniRazgovorId) {
         startStream({ pitanje, razgovorId: aktivniRazgovorId });
-      } else {
-        const key = startStream({ pitanje });
-        setPendingKey(key);
+        return;
       }
+      let tempKey: string | null = null;
+      tempKey = startStream({
+        pitanje,
+        onRazgovorKreiran: (id) => {
+          // Navigiraj samo ako je korisnik još uvijek u istom (pending)
+          // razgovoru. Ako je u međuvremenu kliknuo "Novi razgovor" ili
+          // otvorio drugi, pendingKey ref je već prazan ili drugi.
+          if (pendingKeyRef.current === tempKey) {
+            navigate(`/razgovor/${id}`, { replace: true });
+          }
+        },
+      });
+      setPendingKey(tempKey);
     },
-    [stanje.obrada, stanje.razgovorId, razgovorIdFromUrl],
+    [stanje.obrada, stanje.razgovorId, razgovorIdFromUrl, navigate],
   );
 
   // istorijaDB se učitava samo jednom (i ne refetch-uje dok je live cache aktivan),
