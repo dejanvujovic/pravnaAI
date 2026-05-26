@@ -16,7 +16,13 @@ import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
-import type { DocumentMeta, IngestStage, IngestStatus } from "@rtcg/shared";
+import type {
+  ChunkSummary,
+  DocumentDetail,
+  DocumentMeta,
+  IngestStage,
+  IngestStatus,
+} from "@rtcg/shared";
 import { pool } from "../db.js";
 import {
   hashBuffer,
@@ -478,6 +484,85 @@ documentsRouter.get(
     };
 
     res.json(status);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/documents/:id — pun detalj sa svim segmentima (/document/:id ekran)
+// ---------------------------------------------------------------------------
+
+interface DocumentDetailRow extends DocumentRow {
+  faza: string;
+  ocr_obavljen: boolean;
+  ingest_greska: string | null;
+}
+
+interface ChunkRow {
+  id: string;
+  redni_broj: number;
+  sadrzaj: string;
+  struktura_putanja: string | null;
+  strana_od: number | null;
+  strana_do: number | null;
+}
+
+documentsRouter.get(
+  "/:id",
+  async (req: Request, res: Response): Promise<void> => {
+    const id = req.params.id;
+    if (!id || !UUID_RE.test(id)) {
+      res.status(400).json({ greska: "Neispravan ID dokumenta." });
+      return;
+    }
+
+    const meta = await pool.query<DocumentDetailRow>(
+      `SELECT
+         d.id, d.naslov, d.tip, d.oblast, d.status, d.datum,
+         d.organ_sud, d.broj_sluzbenog_lista, d.jezik,
+         d.broj_strana, d.velicina_bajtova,
+         d.kreirano, d.azurirano, d.faza,
+         d.ocr_obavljen, d.ingest_greska,
+         (SELECT COUNT(*)::int FROM rag.chunks WHERE document_id = d.id) AS broj_segmenata
+       FROM documents.documents d
+       WHERE d.id = $1::uuid AND d.obrisano IS NULL`,
+      [id],
+    );
+
+    if (meta.rowCount === 0) {
+      res.status(404).json({ greska: "Dokument nije pronađen." });
+      return;
+    }
+
+    // Segmenti se ne učitavaju zajedno sa metapodacima u istom upitu — jedan
+    // dokument može imati stotine chunkova, a `tekst` može biti veći od KB.
+    // Dva upita su jednostavnija od JOIN + agregacije.
+    const chunks = await pool.query<ChunkRow>(
+      `SELECT id, redni_broj, sadrzaj, struktura_putanja, strana_od, strana_do
+         FROM rag.chunks
+        WHERE document_id = $1::uuid
+        ORDER BY redni_broj ASC`,
+      [id],
+    );
+
+    const row = meta.rows[0]!;
+    const segmenti: ChunkSummary[] = chunks.rows.map((c) => ({
+      id: c.id,
+      redniBroj: c.redni_broj,
+      sadrzaj: c.sadrzaj,
+      strukturaPutanja: c.struktura_putanja,
+      stranaOd: c.strana_od,
+      stranaDo: c.strana_do,
+    }));
+
+    const detalj: DocumentDetail = {
+      ...rowToMeta(row),
+      faza: row.faza as IngestStage,
+      ocrObavljen: row.ocr_obavljen,
+      ingestGreska: row.ingest_greska,
+      segmenti,
+    };
+
+    res.json(detalj);
   },
 );
 

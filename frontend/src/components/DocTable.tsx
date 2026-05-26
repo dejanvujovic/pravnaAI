@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   ChevronLeft,
   ChevronRight,
@@ -273,7 +274,23 @@ export function DocTable({ osvezenje = 0 }: Props) {
             {podaci?.dokumenti.map((d) => (
               <tr key={d.id} style={{ borderTop: "1px solid var(--border)" }}>
                 <Td>
-                  <div style={{ fontWeight: 500 }}>{d.naslov}</div>
+                  <Link
+                    to={`/document/${d.id}`}
+                    style={{
+                      fontWeight: 500,
+                      color: "var(--text)",
+                      textDecoration: "none",
+                      transition: "color var(--t-fast)",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.color = "var(--accent)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = "var(--text)";
+                    }}
+                  >
+                    {d.naslov}
+                  </Link>
                   {d.organSud && (
                     <div
                       className="ui-sans"
