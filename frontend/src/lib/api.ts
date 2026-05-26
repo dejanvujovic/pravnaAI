@@ -9,6 +9,7 @@
 import type {
   AnalyzeResponse,
   ChunkDetail,
+  DocumentDetail,
   DocumentListQuery,
   DocumentListResponse,
   DocumentMeta,
@@ -209,6 +210,16 @@ export async function getChunk(id: string, signal?: AbortSignal): Promise<ChunkD
   const r = await fetch(`${API_BASE}/api/chunks/${id}`, { signal });
   if (!r.ok) throw await obradiGreskuOdgovora(r);
   return (await r.json()) as ChunkDetail;
+}
+
+/** GET /api/documents/:id — pun detalj dokumenta sa svim segmentima. */
+export async function getDokumentDetalj(
+  id: string,
+  signal?: AbortSignal,
+): Promise<DocumentDetail> {
+  const r = await fetch(`${API_BASE}/api/documents/${id}`, { signal });
+  if (!r.ok) throw await obradiGreskuOdgovora(r);
+  return (await r.json()) as DocumentDetail;
 }
 
 // ---------------------------------------------------------------------------

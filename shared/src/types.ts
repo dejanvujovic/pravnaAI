@@ -312,6 +312,37 @@ export interface ChunkDetail {
 }
 
 // ---------------------------------------------------------------------------
+// Detalj dokumenta (/document/:id ekran)
+// ---------------------------------------------------------------------------
+
+/**
+ * Skraćen prikaz chunka u listi segmenata na detalj ekranu — bez
+ * `embedding`-a (vector se ne šalje preko API-ja), bez document_id-ja
+ * (već je u parent objektu).
+ */
+export interface ChunkSummary {
+  id: string;
+  redniBroj: number;
+  sadrzaj: string;
+  strukturaPutanja: string | null;
+  stranaOd: number | null;
+  stranaDo: number | null;
+}
+
+/**
+ * Pun detalj dokumenta — metapodaci, ingest faza, broj strana itd, plus
+ * lista segmenata po redoslijedu. Vraća GET /api/documents/:id.
+ */
+export interface DocumentDetail extends DocumentMeta {
+  faza: IngestStage;
+  /** True ako je tokom ingest-a primijenjen OCR. */
+  ocrObavljen: boolean;
+  /** Greška ako je `faza === GRESKA`, inače null. */
+  ingestGreska: string | null;
+  segmenti: ChunkSummary[];
+}
+
+// ---------------------------------------------------------------------------
 // Listing dokumenata (Ingest ekran)
 // ---------------------------------------------------------------------------
 
