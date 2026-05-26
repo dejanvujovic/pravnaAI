@@ -8,12 +8,30 @@ import {
 } from "@rtcg/shared";
 import { TIP_META } from "../lib/docTypes.js";
 import { DocumentsApiError, analyzeDokument, uploadDokument } from "../lib/api.js";
+import { BatchUploadTable } from "./BatchUploadTable.js";
 
 const MAX_FILE_MB = 50;
+const MAX_BATCH = 10;
 const ALLOWED_MIMETYPES = new Set([
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ]);
+
+/** Vraća { valjani, odbijeni } iz liste fajlova. */
+function validirajFajlove(fajlovi: File[]): { valjani: File[]; odbijeni: string[] } {
+  const valjani: File[] = [];
+  const odbijeni: string[] = [];
+  for (const f of fajlovi) {
+    if (!ALLOWED_MIMETYPES.has(f.type)) {
+      odbijeni.push(`${f.name}: nepodržan format`);
+    } else if (f.size > MAX_FILE_MB * 1024 * 1024) {
+      odbijeni.push(`${f.name}: veći od ${MAX_FILE_MB} MB`);
+    } else {
+      valjani.push(f);
+    }
+  }
+  return { valjani, odbijeni };
+}
 
 const OBLAST_LABELS: Record<LegalArea, string> = {
   RADNO_PRAVO: "Radno pravo",
@@ -72,6 +90,12 @@ function predloziNaslov(filename: string): string {
 
 export function Upload({ onUploadGotov }: Props) {
   const [fajl, setFajl] = useState<File | null>(null);
+  /**
+   * Batch režim — kad korisnik baci ≥ 2 fajla. Postavlja se odjednom u
+   * onDrop/onChange; BatchUploadTable preuzima kontrolu. Single-file flow
+   * je netaknut.
+   */
+  const [batchFajlovi, setBatchFajlovi] = useState<File[] | null>(null);
   const [forma, setForma] = useState<FormState>(PRAZNA_FORMA);
   const [salje, setSalje] = useState(false);
   const [greska, setGreska] = useState<string | null>(null);
@@ -157,11 +181,51 @@ export function Upload({ onUploadGotov }: Props) {
       });
   }, []);
 
+  /**
+   * Rutira dropped/picked fajlove: 1 → single-file flow, ≥ 2 → batch.
+   * Validacija formata/veličine je per-fajl; nevaljani se ispisuju kao
+   * upozorenje.
+   */
+  const obradiVisestruke = useCallback(
+    (fajlovi: File[]) => {
+      setGreska(null);
+      if (fajlovi.length === 0) return;
+      const { valjani, odbijeni } = validirajFajlove(fajlovi);
+      if (valjani.length === 0) {
+        setGreska(
+          odbijeni.length > 0
+            ? `Nijedan fajl nije prihvaćen: ${odbijeni.join("; ")}`
+            : "Nijedan fajl nije prihvaćen.",
+        );
+        return;
+      }
+      if (valjani.length > MAX_BATCH) {
+        setGreska(
+          `Maksimalno ${MAX_BATCH} fajlova po batch-u. Izabrano: ${valjani.length}.`,
+        );
+        return;
+      }
+      if (valjani.length === 1) {
+        odaberi(valjani[0]!);
+        if (odbijeni.length > 0) {
+          setGreska(`Preskočeno: ${odbijeni.join("; ")}`);
+        }
+        return;
+      }
+      // Batch režim.
+      setBatchFajlovi(valjani);
+      if (odbijeni.length > 0) {
+        setGreska(`Preskočeno ${odbijeni.length}: ${odbijeni.join("; ")}`);
+      }
+    },
+    [odaberi],
+  );
+
   const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragOver(false);
-    const f = e.dataTransfer.files[0];
-    if (f) odaberi(f);
+    const fajlovi = Array.from(e.dataTransfer.files);
+    obradiVisestruke(fajlovi);
   };
 
   const obrisi = () => {
@@ -233,6 +297,47 @@ export function Upload({ onUploadGotov }: Props) {
     }
   };
 
+  // Batch režim u potpunosti zamijeni single-file UI. Ostavi grešku iznad
+  // za prikaz upozorenja o preskočenim fajlovima.
+  if (batchFajlovi) {
+    return (
+      <div
+        style={{
+          background: "var(--panel)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--r-card)",
+          padding: 20,
+        }}
+      >
+        {greska && (
+          <div
+            className="ui-sans"
+            style={{
+              marginBottom: 14,
+              padding: "9px 14px",
+              background: "color-mix(in srgb, var(--accent) 8%, var(--panel-2))",
+              border:
+                "1px solid color-mix(in srgb, var(--accent) 40%, var(--border))",
+              borderRadius: "var(--r-button)",
+              fontSize: 12.5,
+              color: "var(--muted)",
+            }}
+          >
+            {greska}
+          </div>
+        )}
+        <BatchUploadTable
+          pocetniFajlovi={batchFajlovi}
+          onUploadGotov={onUploadGotov}
+          onZatvori={() => {
+            setBatchFajlovi(null);
+            setGreska(null);
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       style={{
@@ -281,15 +386,20 @@ export function Upload({ onUploadGotov }: Props) {
             Prevuci PDF ili DOCX ovdje
           </div>
           <div className="ui-sans" style={{ fontSize: 12, color: "var(--muted)" }}>
-            ili klikni da izabereš · max {MAX_FILE_MB} MB
+            ili klikni da izabereš · max {MAX_FILE_MB} MB po fajlu · do{" "}
+            {MAX_BATCH} fajlova odjednom
           </div>
           <input
             ref={inputRef}
             type="file"
+            multiple
             accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) odaberi(f);
+              const fajlovi = Array.from(e.target.files ?? []);
+              obradiVisestruke(fajlovi);
+              // Reset value-a inputa da se isti fajl može ponovo izabrati
+              // ako korisnik klikne X pa otvori dijalog.
+              e.target.value = "";
             }}
             style={{ display: "none" }}
           />
