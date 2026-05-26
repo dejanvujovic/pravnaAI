@@ -38,7 +38,7 @@ Cijeli stack se hostuje interno — podaci ne napuštaju RTCG infrastrukturu osi
 | **2 — Produkcija** | avg/sep 2026 | LDAP/AD autentifikacija, role-based access, audit, monitoring, hardening |
 | **3 — Contract Intelligence** | okt/nov 2026 | Analiza rizika ugovora prema sudskoj praksi, Word eksport sa *tracked changes* |
 
-**Status (maj 2026) — Faza 1 funkcionalno gotova, polishing u toku:**
+**Status (maj 2026) — Faze 1 i 1.5 gotove, spreman za pilot test sa pravnicima:**
 
 Infrastruktura:
 - ✅ Monorepo skelet, Docker Compose stack, CI workflow
@@ -47,9 +47,9 @@ Infrastruktura:
 - ✅ Tesseract OCR sidecar (srp + srp_latn, 300 DPI)
 - ✅ SQL migration sistem (hash-tracked) — trenutno na `0009_conversations.sql`
 
-Backend (Faza 1):
+Backend:
 - ✅ Ingest pipeline — parser (PDF/DOCX), OCR fallback, chunking po članovima, BGE-M3 embedding, upis u `rag.chunks`
-- ✅ `POST /api/documents` + analyze + PATCH (edit metapodataka) + DELETE (soft) + GET list
+- ✅ `POST /api/documents` + analyze + PATCH (edit metapodataka) + DELETE (soft) + GET list + **GET /:id (pun detalj sa segmentima)**
 - ✅ `GET /api/chunks/:id` — puni sadržaj segmenta za SourceDrawer
 - ✅ `POST /api/search` — hibridna pretraga (BGE-M3 cosine + pg_trgm), RRF fuzija
 - ✅ `POST /api/qna` — Claude Sonnet 4-6 streaming + obavezno citiranje, multi-turn istorija
@@ -57,16 +57,18 @@ Backend (Faza 1):
 
 Frontend:
 - ✅ Chat ekran sa SSE streaming-om, EmptyState sa 2×2 quick action grid-om
-- ✅ Citati su klikabilni — SourceDrawer slide-out sa punim sadržajem chunka i metapodacima
+- ✅ Citati su klikabilni — SourceDrawer slide-out sa punim sadržajem chunka, metapodacima i **"Otvori cijeli dokument" deep-link-om**
 - ✅ Multi-turn razgovori sa sidebar-om i istorijom (klik za nastavak, X za brisanje)
+- ✅ **Background streaming** — "Novi razgovor" oslobađa UI dok prethodni stream završava u pozadini i uredno snima u DB
 - ✅ Ingest ekran — drag-drop, auto-popunjavanje metapodataka iz teksta (heuristika), pipeline progress, lista sa edit/delete
-- ✅ Routing: `/` (novi razgovor), `/razgovor/:id` (sačuvani), `/dokumenti`
+- ✅ **Batch upload** — do 10 fajlova odjednom kroz queue tabelu sa paralelnim analyze() i sekvencijalnim POST-om
+- ✅ **Ekran `/document/:id`** — header sa metapodacima, sticky TOC za navigaciju kroz duga zakone, lista segmenata sa strukturom (Član N) i highlight aktivnog segmenta
+- ✅ Routing: `/` (novi razgovor), `/razgovor/:id` (sačuvani), `/dokumenti`, `/document/:id`
 
 **Trenutno otvoreni rad:**
-- Faza 1 polishing — sljedeći potezi se određuju prema potrebama korisnika.
+- 🧪 **Pilot test sa pravnicima RTCG-a** — tim pravne službe koristi sistem na realnim slučajevima; prioriteti Faze 2 vs Faze 3 se određuju prema povratnoj informaciji.
 
-**Pending (Faza 1.5+):**
-- ⏳ `/document/:id` — ekran sa pregledom segmenata i izvučenih metapodataka
+**Pending (Faza 2+):**
 - ⏳ Faza 2 — LDAP/AD auth, RBAC, audit log UI, nginx + TLS, backup
 - ⏳ Faza 3 — Contract Intelligence (analiza rizika ugovora, Word eksport sa tracked changes)
 
@@ -376,10 +378,10 @@ Trenutno definisano:
 | Domen | Tipovi |
 |---|---|
 | Taksonomija | `DocumentType`, `LegalArea`, `DocumentStatus`, `DocumentGroup` |
-| Dokumenti | `DocumentMeta`, `DocumentPatchRequest`, `DocumentListQuery`, `DocumentListResponse`, `AnalyzeResponse` |
+| Dokumenti | `DocumentMeta`, `DocumentDetail`, `DocumentPatchRequest`, `DocumentListQuery`, `DocumentListResponse`, `AnalyzeResponse` |
 | Pretraga | `SearchRequest`, `SearchHit`, `SearchResponse` |
 | Q&A | `Citat`, `QnaPoruka`, `QnaRequest`, `QnaResponse`, `QnaStreamEvent` (SSE) |
-| Chunkovi | `ChunkDetail` (SourceDrawer) |
+| Chunkovi | `ChunkDetail` (SourceDrawer), `ChunkSummary` (lista segmenata u DocumentDetail) |
 | Razgovori | `RazgovorListItem`, `SacuvanaPoruka`, `RazgovorDetail` |
 | Ingest | `IngestStage`, `INGEST_STAGE_ORDER`, `IngestStatus`, `IngestPatchRequest` |
 | Health | `HealthResponse` |
@@ -406,6 +408,7 @@ Svi tipovi su u [shared/src/types.ts](shared/src/types.ts). Ne-2xx odgovori vra�
 | `POST` | `/api/documents` | multipart: `file` (PDF/DOCX ≤ 50 MB) + `metadata` (JSON `DocumentMeta`) | `201` sa `DocumentMeta`, `409` ako hash već postoji |
 | `POST` | `/api/documents/analyze` | multipart: `file` | `AnalyzeResponse` — heuristički prijedlog metapodataka (ne snima fajl) |
 | `GET` | `/api/documents` | query: `tip`, `oblast`, `status`, `traziNaslov`, `limit`, `offset` | `DocumentListResponse` |
+| `GET` | `/api/documents/:id` | — | `DocumentDetail` — pun metapodaci + lista svih segmenata |
 | `GET` | `/api/documents/:id/status` | — | `IngestStatus` (polling tokom pipeline-a) |
 | `PATCH` | `/api/documents/:id` | `DocumentPatchRequest` (sva polja opciona) | `DocumentMeta` |
 | `DELETE` | `/api/documents/:id` | — | `204`, soft delete |
@@ -585,9 +588,16 @@ Browser i fetch postavljaju MIME automatski iz file ekstenzije.
 - [x] **PR #16** — Sidebar sa istorijom razgovora, perzistencija u DB, `/razgovor/:id` ruta
 - [x] **PR #18** — Background streaming: "Novi razgovor" oslobađa UI dok prethodni stream završava u pozadini i uredno snima u DB
 
-### Faza 1.5
+### Faza 1.5 — gotovo (PR #19 – #22)
 
-- [ ] Ekran `/document/:id` — pregled segmenata + izvučenih metapodataka (član, datum presude, strane ugovora)
+- [x] **PR #19** — Ekran `/document/:id` (Faza 1.5) sa headerom, metapodacima i listom segmenata + `GET /api/documents/:id`
+- [x] **PR #20** — Sticky TOC na `/document/:id` sa active highlight-om (IntersectionObserver) i URL hash deep-link podrškom
+- [x] **PR #21** — Batch upload (do 10 fajlova odjednom) — queue tabela sa paralelnim analyze() i sekvencijalnim POST-om
+- [x] **PR #22** — "Otvori cijeli dokument" deep-link iz SourceDrawer-a → `/document/:id#segment-:chunkId` u novom tab-u
+
+### Pilot test (maj/jun 2026)
+
+Pravna služba RTCG-a koristi sistem na realnim slučajevima. Prikupljene povratne informacije određuju da li se prvo ide na Fazu 2 (produkcioni hardening) ili Fazu 3 (Contract Intelligence).
 
 ### Faza 2 (priprema)
 
