@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
-import { Calendar, FileText, Hash, Landmark, Loader2, X } from "lucide-react";
+import {
+  Calendar,
+  ExternalLink,
+  FileText,
+  Hash,
+  Landmark,
+  Loader2,
+  X,
+} from "lucide-react";
 import type { Citat, ChunkDetail } from "@rtcg/shared";
 import { DocumentsApiError, getChunk } from "../lib/api.js";
 import { TIP_META } from "../lib/docTypes.js";
@@ -220,6 +228,43 @@ export function SourceDrawer({ citat, onZatvori }: Props) {
                 <Pill>{detalj.strukturaPutanja}</Pill>
               )}
             </div>
+          )}
+
+          {/* Otvori cijeli dokument — deep-link sa highlight-om segmenta. */}
+          {citat && (
+            <a
+              href={`/document/${citat.documentId}#segment-${citat.chunkId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ui-sans"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "7px 12px",
+                marginBottom: 16,
+                fontSize: 12,
+                fontWeight: 500,
+                color: "var(--accent)",
+                background: "color-mix(in srgb, var(--accent) 8%, transparent)",
+                border:
+                  "1px solid color-mix(in srgb, var(--accent) 35%, var(--border))",
+                borderRadius: "var(--r-button)",
+                textDecoration: "none",
+                transition: "background var(--t-fast)",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background =
+                  "color-mix(in srgb, var(--accent) 15%, transparent)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background =
+                  "color-mix(in srgb, var(--accent) 8%, transparent)";
+              }}
+            >
+              <ExternalLink size={12} />
+              Otvori cijeli dokument
+            </a>
           )}
 
           {greska && (
