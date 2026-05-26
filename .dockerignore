@@ -1,0 +1,57 @@
+# Build context isključenja — drži docker context malim i ne curi
+# secret-e u image-ima.
+
+# Node artefakti
+**/node_modules
+**/dist
+**/.vite
+**/coverage
+**/.turbo
+**/.cache
+
+# Build izlazi
+frontend/dist
+backend/dist
+
+# Lokalni podaci (NIKAD u image-u — kontejner ima svoj volume)
+data
+*.sqlite
+*.sqlite-journal
+
+# Tajne i lokalna konfiguracija
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Git i editor
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Dokumentacija (nije potrebna u runtime image-u)
+README.md
+docs
+*.md
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# Embedding/OCR sidecar build artefakti
+embeddings/__pycache__
+ocr/__pycache__
+*.pyc
+
+# Logovi
+*.log
+logs
+
+# Test
+**/__tests__
+**/*.test.ts
+**/*.spec.ts
