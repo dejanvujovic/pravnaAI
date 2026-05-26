@@ -13,6 +13,7 @@ Cijeli stack se hostuje interno — podaci ne napuštaju RTCG infrastrukturu osi
 ## Sadržaj
 
 - [Faze razvoja i trenutno stanje](#faze-razvoja-i-trenutno-stanje)
+- [Dokumentacija](#dokumentacija)
 - [Arhitektura](#arhitektura)
 - [Tehnološki stack](#tehnološki-stack)
 - [Brzi start (novi računar)](#brzi-start-novi-računar)
@@ -69,6 +70,16 @@ Frontend:
 - ⏳ `/document/:id` — ekran sa pregledom segmenata i izvučenih metapodataka
 - ⏳ Faza 2 — LDAP/AD auth, RBAC, audit log UI, nginx + TLS, backup
 - ⏳ Faza 3 — Contract Intelligence (analiza rizika ugovora, Word eksport sa tracked changes)
+
+---
+
+## Dokumentacija
+
+| Za koga | Dokument |
+|---|---|
+| **Pravnici** koji koriste sistem | [docs/PRIRUCNIK.md](docs/PRIRUCNIK.md) — kratak priručnik za rad u Chat / Dokumenti / Detalj ekranima |
+| **IT / sysadmin** koji instalira na server | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Docker stack, nginx reverse proxy, systemd, backup, troubleshooting |
+| **Frontend developer** | [frontend/UI-SPEC.md](frontend/UI-SPEC.md) — UI dizajn tokeni, ekrani, komponente, UX invarijante |
 
 ---
 
