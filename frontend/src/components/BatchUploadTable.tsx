@@ -15,6 +15,7 @@ import {
 } from "@rtcg/shared";
 import { TIP_META } from "../lib/docTypes.js";
 import { DocumentsApiError, analyzeDokument, uploadDokument } from "../lib/api.js";
+import { generisiUUID } from "../lib/uuid.js";
 
 const OBLAST_LABELS: Record<LegalArea, string> = {
   RADNO_PRAVO: "Radno pravo",
@@ -102,7 +103,7 @@ function pocetnaForma(f: File): RedForma {
 export function BatchUploadTable({ pocetniFajlovi, onUploadGotov, onZatvori }: Props) {
   const [redovi, setRedovi] = useState<Red[]>(() =>
     pocetniFajlovi.map((f) => ({
-      rid: crypto.randomUUID(),
+      rid: generisiUUID(),
       fajl: f,
       forma: pocetnaForma(f),
       autoPolja: new Set(),
