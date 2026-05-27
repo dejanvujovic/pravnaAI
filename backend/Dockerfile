@@ -20,6 +20,10 @@ COPY frontend/package.json ./frontend/
 # `start` skripta koristi u runtime-u, pa ne smijemo --omit=dev.
 RUN npm install --no-audit --no-fund
 
+# Bazni tsconfig — backend/shared `tsconfig.json` ga extend-uju
+# (`../tsconfig.base.json`); tsx ga čita za path/type resolution.
+COPY tsconfig.base.json ./
+
 # Layer 2: izvorni kod backend-a i shared tipova. Frontend se ne kopira
 # (ima svoj image).
 COPY shared ./shared

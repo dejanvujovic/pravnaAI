@@ -19,6 +19,10 @@ COPY backend/package.json ./backend/
 
 RUN npm install --no-audit --no-fund
 
+# Bazni tsconfig — frontend/shared `tsconfig.json` ga extend-uju
+# (`../tsconfig.base.json`); bez njega `tsc` puca sa TS5083.
+COPY tsconfig.base.json ./
+
 # Izvorni kod frontend-a + shared tipova (frontend importuje @rtcg/shared).
 COPY shared ./shared
 COPY frontend ./frontend
