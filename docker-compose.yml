@@ -50,9 +50,10 @@ services:
       LOG_LEVEL: INFO
 
   # ---------------------------------------------------------------------------
-  # Backend i frontend — koriste se u Portainer/produkcija stack-u. U dev
-  # modu se najčešće preskaču (`docker compose up postgres embeddings ocr`)
-  # i pokreću direktno preko `npm run dev:backend` / `npm run dev:frontend`.
+  # Backend i frontend — uvijek u stack-u za Portainer/produkcija. U dev
+  # modu se ne dižu kroz `npm run stack:up` (koji eksplicitno bira samo
+  # infra servise) — dev pokreće backend i frontend direktno preko
+  # `npm run dev:backend` / `npm run dev:frontend`.
   # ---------------------------------------------------------------------------
   backend:
     build:
@@ -84,8 +85,6 @@ services:
       - backend-uploads:/app/data/uploads
     expose:
       - "4000"
-    profiles:
-      - app
 
   frontend:
     build:
@@ -97,8 +96,6 @@ services:
       - backend
     ports:
       - "${HTTP_PORT:-80}:80"
-    profiles:
-      - app
 
 volumes:
   postgres-data:

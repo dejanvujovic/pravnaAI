@@ -140,7 +140,6 @@ dodaj:
 
 | Naziv | Vrijednost |
 |---|---|
-| `COMPOSE_PROFILES` | `app` |
 | `PGPASSWORD` | *(generisano u Koraku 3)* |
 | `ANTHROPIC_API_KEY` | `sk-ant-…` *(iz Koraka 3)* |
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-6` |
@@ -148,11 +147,11 @@ dodaj:
 | `PGDATABASE` | `rtcg_legal_ai` |
 | `HTTP_PORT` | `80` *(promijeni ako port 80 nije slobodan)* |
 
-> ⚠ **`COMPOSE_PROFILES=app` je obavezan.** Bez ovog flag-a Portainer
-> diže samo infrastrukturu (postgres + embeddings + OCR), bez backend-a
-> i frontend-a. Razlog: `backend` i `frontend` su pod Docker Compose
-> profilom da bi dev tok (`npm run stack:up` na razvojnoj mašini) i
-> dalje radio sa lokalnim Vite/tsx-om.
+> ℹ U razvojnoj mašini `npm run stack:up` diže samo infrastrukturu
+> (postgres + embeddings + OCR); backend i frontend se startuju
+> direktno preko `npm run dev:backend` / `npm run dev:frontend` da
+> dev ima hot reload. U Portainer-u se diže cio stack jer compose
+> nema profilske podjele.
 
 ## Korak 6 — Deploy
 
