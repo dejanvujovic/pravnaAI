@@ -119,19 +119,49 @@ Anthropic API ključ:
 
 ## Korak 4 — Dodaj Stack u Portainer
 
-U Portainer UI:
+Postoje dvije metode. **Metoda A (Web editor + GHCR) je preporučena** —
+ne zavisi od toga da Portainer može da klonira git repo (na sporijim/
+firewall-ovanim mrežama git fetch zna da istekne) i ne bilduje ništa na
+serveru, samo povlači gotove slike.
+
+### Metoda A — Web editor sa gotovim slikama (GHCR) ✅ preporučeno
+
+Preduslov: GitHub Actions workflow `docker-publish.yml` je bar jednom
+prošao na `main` i objavio slike na `ghcr.io` (provjeri u repo →
+**Actions** tab da je "Docker publish (GHCR)" zelen, i u repo →
+**Packages** da postoji 5 paketa `pravnaai-*`).
+
+> Paketi na GHCR-u su podrazumijevano **privatni**. Da bi Portainer
+> mogao da ih povuče bez registry kredencijala, otvori svaki paket na
+> https://github.com/dejanvujovic?tab=packages → **Package settings** →
+> **Change visibility** → **Public**. (Ili dodaj GHCR registry
+> kredencijale u Portainer: **Registries → Add registry → Custom**,
+> URL `ghcr.io`, username + GitHub PAT sa `read:packages`.)
 
 1. Lijevi meni → **Stacks** → **+ Add stack**
 2. **Name**: `rtcg-legal-ai`
-3. **Build method**: izaberi **Repository**
-4. **Repository URL**: `https://github.com/dejanvujovic/pravnaAI`
-5. **Repository reference**: `refs/heads/main`
-6. **Compose path**: `docker-compose.yml`
-7. **Authentication**: ostavi prazno ako je repo javni; inače dodaj GitHub PAT
+3. **Build method**: izaberi **Web editor**
+4. Paste cijeli sadržaj fajla
+   [`docker-compose.portainer.yml`](../docker-compose.portainer.yml)
+   (raw verzija:
+   `https://raw.githubusercontent.com/dejanvujovic/pravnaAI/main/docker-compose.portainer.yml`)
+5. Nastavi na *Korak 5 — Environment variables*
 
-> Alternativa: **Web editor** umjesto Repository — paste sadržaj
-> `docker-compose.yml` direktno. Plus: ne treba Git pristup. Minus:
-> ne dobijaš auto-update kad commit prođe na main.
+### Metoda B — Repository (git fetch + build na serveru)
+
+Zahtijeva da Portainer pouzdano stiže do GitHub-a i da server bilduje
+slike. Koristi `docker-compose.yml` (sa `build:` direktivama).
+
+1. **Stacks → + Add stack** → **Name**: `rtcg-legal-ai`
+2. **Build method**: **Repository**
+3. **Repository URL**: `https://github.com/dejanvujovic/pravnaAI`
+4. **Repository reference**: `refs/heads/main`
+5. **Compose path**: `docker-compose.yml`
+6. **Authentication**: prazno ako je repo javni; inače GitHub PAT
+   (fine-grained, Contents: Read-only na ovaj repo)
+
+> Ako git fetch ističe sa `context deadline exceeded` — mreža ka GitHub-u
+> je spora/blokirana. Pređi na **Metodu A**.
 
 ## Korak 5 — Environment variables
 
@@ -155,18 +185,23 @@ dodaj:
 
 ## Korak 6 — Deploy
 
-Klikni **Deploy the stack** na dnu forme. Portainer će:
+Klikni **Deploy the stack** na dnu forme.
 
-1. Klonirati repo u svoj data volume (~5 sek)
-2. Bilduje 4 image-a: postgres povlači sa registry, embeddings/ocr/backend/frontend
-   bilduje lokalno (~10–20 min prvi put — Python torch dependencies i
-   BGE-M3 model)
-3. Diže kontejnere u zavisnostima — postgres prvo, embeddings/ocr paralelno,
-   backend kad su svi `healthy`, frontend kad backend krene
+**Metoda A (GHCR):** Portainer povlači 5 gotovih slika sa `ghcr.io`
+(~3–5 GB ukupno prvi put, najveći je embeddings). Bez build-a na serveru.
+
+**Metoda B (Repository):** Portainer klonira repo i bilduje 5 slika
+lokalno (~10–20 min prvi put — Python torch dependencies).
+
+U oba slučaja kontejneri se dižu po zavisnostima — postgres prvo,
+embeddings/ocr paralelno, backend kad je postgres `healthy`, frontend
+kad backend krene.
 
 Prati napredak na **Stacks → rtcg-legal-ai → Containers**. Svi treba
-da budu zelene boje (`running`); ako embeddings ostane `starting` više
-od 15 min, klikni **Logs** i čekaj `"Application startup complete"`.
+da budu zelene boje (`running`/`healthy`); ako embeddings ostane
+`starting` više od 15 min, klikni **Logs** i čekaj
+`"Application startup complete"` (prvi boot skida BGE-M3 model ~2.3 GB
+u `embeddings-cache` volume).
 
 ## Korak 7 — Verifikacija
 
@@ -218,16 +253,18 @@ host portu 80 sa Caddy-jem.
 
 ## Update sistema
 
-U Portainer-u: **Stacks → rtcg-legal-ai → Pull and redeploy**.
+**Metoda A (GHCR):**
+1. Push na `main` → GitHub Actions automatski rebild-uje i objavi nove
+   slike na `ghcr.io` (prati u repo → **Actions**).
+2. Kad workflow pozeleni, u Portainer-u: **Stacks → rtcg-legal-ai →
+   Editor → Update the stack** sa **Re-pull image and redeploy**
+   uključenim. Portainer povlači `:latest` slike i restartuje kontejnere.
 
-Portainer povlači najnoviji commit sa Git-a, rebild-uje image-e koji
-su se promijenili, restartuje pripadajuće kontejnere. Database migracije
-se okidaju automatski pri startu backend-a (idempotentne kroz
-`public._migrations` hash-tracking).
+**Metoda B (Repository):** **Pull and redeploy** — Portainer povlači
+najnoviji commit i rebild-uje izmijenjene slike.
 
-> Ako `Pull and redeploy` ne pokupi nove fajlove, idi u **Editor** tab,
-> klikni **Update the stack** sa `Re-pull image and redeploy` opcijom
-> uključenom.
+U oba slučaja DB migracije se okidaju automatski pri startu backend-a
+(idempotentne kroz `public._migrations` hash-tracking).
 
 ## Backup
 

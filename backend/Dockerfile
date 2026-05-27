@@ -29,6 +29,11 @@ COPY tsconfig.base.json ./
 COPY shared ./shared
 COPY backend ./backend
 
+# Migracioni runner (`backend/scripts/migrate.ts`) čita SQL fajlove iz
+# `/app/db/migrations` (resolve ../../db/migrations). Bez ovoga `npm run
+# migrate` puca sa ENOENT na startu kontejnera.
+COPY db ./db
+
 # Migracije pišu u app dir kroz `MONOREPO_ROOT` u storage.ts; eksplicitno
 # napravi folder za uploads i daj write dozvole node korisniku.
 RUN mkdir -p /app/data/uploads && chown -R node:node /app/data
