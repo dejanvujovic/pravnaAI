@@ -21,6 +21,7 @@
 import type { Citat, QnaPoruka } from "@rtcg/shared";
 import { getRazgovor, QnaApiError, streamQna } from "./api.js";
 import { dobaviSesijaId } from "./session.js";
+import { generisiUUID } from "./uuid.js";
 
 export interface UserMsg {
   uloga: "user";
@@ -177,7 +178,7 @@ export interface StartParams {
  */
 export function startStream(params: StartParams): string {
   const isNew = !params.razgovorId;
-  let key = isNew ? `pending-${crypto.randomUUID()}` : params.razgovorId!;
+  let key = isNew ? `pending-${generisiUUID()}` : params.razgovorId!;
 
   const entry = getOrCreate(key);
   if (entry.state.obrada) return key; // već u toku, ignoriši duplikat

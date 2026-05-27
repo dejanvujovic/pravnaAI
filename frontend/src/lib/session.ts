@@ -4,13 +4,15 @@
  * Mijenja se kad korisnik obriše storage ili pređe na drugi browser.
  */
 
+import { generisiUUID } from "./uuid.js";
+
 const KLJUC = "rtcg.sesijaId";
 
 /** Vrati postojeći UUID iz storage-a ili generiši novi i sačuvaj. */
 export function dobaviSesijaId(): string {
   let id = localStorage.getItem(KLJUC);
   if (!id || !UUID_RE.test(id)) {
-    id = crypto.randomUUID();
+    id = generisiUUID();
     localStorage.setItem(KLJUC, id);
   }
   return id;
