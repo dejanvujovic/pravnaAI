@@ -24,7 +24,7 @@
     "embeddings:logs": "docker compose logs -f embeddings",
     "ocr:up": "docker compose up -d --build ocr",
     "ocr:logs": "docker compose logs -f ocr",
-    "stack:up": "docker compose up -d --build"
+    "stack:up": "docker compose up -d --build postgres embeddings ocr"
   },
   "engines": {
     "node": ">=20.10.0"
