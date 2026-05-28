@@ -68,6 +68,9 @@ services:
       PGPASSWORD: ${PGPASSWORD:-changeme_local_only}
       PGDATABASE: ${PGDATABASE:-rtcg_legal_ai}
       EMBEDDINGS_URL: http://embeddings:8001
+      # Default 10min — CPU embedding na BGE-M3 zna trajati par minuta
+      # po batch-u. Snizi (npr. 60000) ako embeddings dobije GPU.
+      EMBEDDINGS_TIMEOUT_MS: ${EMBEDDINGS_TIMEOUT_MS:-600000}
       OCR_URL: http://ocr:8002
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
