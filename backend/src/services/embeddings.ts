@@ -20,37 +20,99 @@ interface HealthResponseBody {
 export type EmbeddingsStatus = "ok" | "loading" | "down";
 
 /**
+ * Maksimalni broj pokušaja po pozivu /embed prije nego što propustimo grešku.
+ * Pokriva: cold-start (model još učitava, sidecar vraća 503), tranzijentne
+ * `fetch failed` (TCP reset / keepalive timeout), kratke uvicorn pauze pri
+ * GC-u. Permanentne greške (npr. 400 zbog prevelikog teksta) ne retry-jamo.
+ */
+const EMBED_RETRY_MAX = 3;
+
+/** Backoff između pokušaja (ms): 1s, 3s, 9s — exponential. */
+function backoffMs(attempt: number): number {
+  return 1000 * 3 ** attempt;
+}
+
+/**
  * Pošalji do MAX_BATCH tekstova u jednom pozivu sidecar-a.
  * Za veće liste koristi `embedBatched` koji interno dijeli na batch-eve.
  */
 export async function embed(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
 
-  const r = await fetchWithTimeout(
-    `${config.embeddings.url}/embed`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ texts }),
-    },
-    config.embeddings.timeoutMs,
-  );
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < EMBED_RETRY_MAX; attempt++) {
+    try {
+      const r = await fetchWithTimeout(
+        `${config.embeddings.url}/embed`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ texts }),
+        },
+        config.embeddings.timeoutMs,
+      );
 
-  if (!r.ok) {
-    const body = await r.text();
-    throw new Error(`Embedding servis greška ${r.status}: ${body}`);
+      // 503 = model još nije učitan. Retry je smislen.
+      if (r.status === 503) {
+        const body = await r.text();
+        lastErr = new Error(`Embedding servis još nije spreman (503): ${body}`);
+        if (attempt < EMBED_RETRY_MAX - 1) {
+          await sleep(backoffMs(attempt));
+          continue;
+        }
+        throw lastErr;
+      }
+
+      if (!r.ok) {
+        // Ostale ne-2xx (npr. 400 validacija) su permanentne — ne retry.
+        const body = await r.text();
+        throw new Error(`Embedding servis greška ${r.status}: ${body}`);
+      }
+
+      const data = (await r.json()) as EmbedResponseBody;
+
+      if (data.dim !== config.embeddings.dim) {
+        throw new Error(
+          `Embedding dimenzija ${data.dim} ne odgovara konfigurisanoj ${config.embeddings.dim}. ` +
+            `Šema baze ima vector(${config.embeddings.dim}) — promjena dimenzije zahtijeva re-indeksiranje.`,
+        );
+      }
+
+      return data.embeddings;
+    } catch (e) {
+      // Mrežne greške (`fetch failed`, TCP reset) su tranzijentne — retry.
+      // AbortError (naš timeout) takođe retry-ujemo jer drugi pokušaj može
+      // proći ako je sidecar bio zauzet GC-em ili kratko unavailable.
+      if (!isRetryableError(e)) throw e;
+      lastErr = e;
+      if (attempt < EMBED_RETRY_MAX - 1) {
+        console.warn(
+          `[embeddings] pokušaj ${attempt + 1}/${EMBED_RETRY_MAX} neuspjeo: ${
+            e instanceof Error ? e.message : String(e)
+          }. Retry za ${backoffMs(attempt)}ms.`,
+        );
+        await sleep(backoffMs(attempt));
+      }
+    }
   }
 
-  const data = (await r.json()) as EmbedResponseBody;
+  throw lastErr ?? new Error("Embedding poziv neuspjeo bez konkretne greške.");
+}
 
-  if (data.dim !== config.embeddings.dim) {
-    throw new Error(
-      `Embedding dimenzija ${data.dim} ne odgovara konfigurisanoj ${config.embeddings.dim}. ` +
-        `Šema baze ima vector(${config.embeddings.dim}) — promjena dimenzije zahtijeva re-indeksiranje.`,
-    );
-  }
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-  return data.embeddings;
+function isRetryableError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  // undici `fetch failed` (sa cause = network error), TCP reset, ECONNRESET,
+  // AbortError od naseg timeout-a. Sve smatramo tranzijentnim.
+  if (e.name === "AbortError") return true;
+  if (e.message.includes("fetch failed")) return true;
+  if (e.message.includes("ECONNRESET")) return true;
+  if (e.message.includes("ECONNREFUSED")) return true;
+  if (e.message.includes("ETIMEDOUT")) return true;
+  return false;
 }
 
 /** Veličina jednog batch-a ka sidecar-u — polovina sidecar max-a (32). */

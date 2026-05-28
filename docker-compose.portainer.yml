@@ -37,6 +37,17 @@ services:
       EMBEDDING_MODEL: BAAI/bge-m3
       EMBEDDING_MAX_BATCH: "32"
       LOG_LEVEL: INFO
+    # Healthcheck: čekaj da `/health` vrati `"status":"ok"` (model učitan u RAM).
+    # Bez ovog backend bi krenuo prije nego sto sidecar bude spreman i prvi
+    # ingest pozivi bi pali sa `fetch failed`/503. `start_period` daje 10 min
+    # za prvo preuzimanje modela (~1.5 GB sa HuggingFace), retries su
+    # konzervativne za sporu mrežu.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8001/health | grep -q '\"status\":\"ok\"' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 600s
+      retries: 30
 
   ocr:
     image: ghcr.io/dejanvujovic/pravnaai-ocr:latest
@@ -56,7 +67,7 @@ services:
       postgres:
         condition: service_healthy
       embeddings:
-        condition: service_started
+        condition: service_healthy
       ocr:
         condition: service_started
     environment:
