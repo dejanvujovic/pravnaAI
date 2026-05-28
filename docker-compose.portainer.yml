@@ -71,6 +71,10 @@ services:
       # Default 10min — CPU embedding na BGE-M3 zna trajati par minuta
       # po batch-u. Snizi (npr. 60000) ako embeddings dobije GPU.
       EMBEDDINGS_TIMEOUT_MS: ${EMBEDDINGS_TIMEOUT_MS:-600000}
+      # Koliko dokumenata ingest worker procesuje paralelno. Default 1 jer
+      # je embeddings sidecar single-process — paralelizam samo dijeli CPU
+      # i pravi `fetch failed`. Podigni samo ako embeddings ima GPU.
+      INGEST_CONCURRENCY: ${INGEST_CONCURRENCY:-1}
       OCR_URL: http://ocr:8002
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
