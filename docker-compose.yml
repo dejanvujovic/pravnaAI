@@ -35,6 +35,16 @@ services:
       EMBEDDING_MODEL: BAAI/bge-m3
       EMBEDDING_MAX_BATCH: "32"
       LOG_LEVEL: INFO
+    # Healthcheck: čekaj da `/health` vrati `"status":"ok"` (model učitan u RAM).
+    # Image već definiše HEALTHCHECK u Dockerfile-u, ovdje ga ekspozujemo da
+    # bude eksplicitno i da backend `depends_on: service_healthy` radi i bez
+    # pre-buildovane slike (compose lokalno, bez GHCR-a).
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8001/health | grep -q '\"status\":\"ok\"' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 600s
+      retries: 30
 
   ocr:
     build:
@@ -65,7 +75,7 @@ services:
       postgres:
         condition: service_healthy
       embeddings:
-        condition: service_started
+        condition: service_healthy
       ocr:
         condition: service_started
     environment:
