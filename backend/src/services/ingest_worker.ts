@@ -27,13 +27,47 @@ interface DocForIngest {
   tekst: string | null;
 }
 
-/** Pokreće async ingest za jedan dokument. Greške se hvataju interno. */
+/**
+ * Concurrency limit za ingest worker. Embedding sidecar je single-process
+ * (jedan Python proces, jedan model u memoriji), pa paralelne ingest task-ove
+ * dijeli CPU što kvari throughput i pravi `fetch failed` na konekcijama koje
+ * se kufaju u redu. Serial obrada (1 dokument istovremeno) daje punu CPU
+ * dostupnost embeddings sidecar-u, queue se brže drenira ukupno.
+ *
+ * Default 1; može se podići kroz `INGEST_CONCURRENCY` ako embeddings dobije
+ * GPU sa headroom-om (`device="cuda"` može da obradi više batch-eva paralelno).
+ */
+const INGEST_CONCURRENCY = (() => {
+  const raw = process.env.INGEST_CONCURRENCY;
+  if (!raw || raw.trim() === "") return 1;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+})();
+
+const queue: string[] = [];
+let active = 0;
+
+/** Pokreće async ingest za jedan dokument. Stavlja u red ako su svi slot-ovi zauzeti. */
 export function scheduleIngest(documentId: string): void {
-  setImmediate(() => {
-    runIngest(documentId).catch((e) => {
-      console.error(`[worker] neuhvaćena greška u runIngest(${documentId}):`, e);
+  queue.push(documentId);
+  pumpQueue();
+}
+
+function pumpQueue(): void {
+  while (active < INGEST_CONCURRENCY && queue.length > 0) {
+    const id = queue.shift()!;
+    active++;
+    setImmediate(() => {
+      runIngest(id)
+        .catch((e) => {
+          console.error(`[worker] neuhvaćena greška u runIngest(${id}):`, e);
+        })
+        .finally(() => {
+          active--;
+          pumpQueue();
+        });
     });
-  });
+  }
 }
 
 /** Pronalazi sve dokumente sa polovično obrađenom obradom i pokreće ih. */
