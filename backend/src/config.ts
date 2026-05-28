@@ -50,7 +50,10 @@ export const config = {
   embeddings: {
     url: opt("EMBEDDINGS_URL", "http://localhost:8001"),
     dim: 1024,
-    timeoutMs: 60_000,
+    // Embedding na CPU (bez GPU-a) zna trajati par minuta po batch-u
+    // pogotovo za prvi poziv (warm-up modela). Default 10 min — može da
+    // se snizi na produkciji sa GPU-om kroz `EMBEDDINGS_TIMEOUT_MS`.
+    timeoutMs: intOpt("EMBEDDINGS_TIMEOUT_MS", 10 * 60 * 1000),
   },
 
   ocr: {
